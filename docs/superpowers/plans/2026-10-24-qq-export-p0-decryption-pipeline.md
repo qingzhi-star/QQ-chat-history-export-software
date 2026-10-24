@@ -10,6 +10,12 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-23-qq-chat-history-export-design.md` —— 本 plan 从 spec 论证，执行者需同时阅读两份文档。相关章节：§3（实测基线）、§5.2（目录结构）、§6（core/ 全节）、§10（测试策略）、§11（降级总则）、§12（风险）。
 
+**⚠️ 修正案 A（规范性，优先级高于本文件）：** `docs/superpowers/plans/2026-10-24-p0-amendment-A.md`
+外部评审后对本计划做了实质修改，涉及 Task 2–13 的验收条件、`DecryptResult` 三态状态、
+快照一致性证明、WAL 恢复的结论性证据、密钥流转禁令、明文产物清理、
+SQLCipher 独立 known-answer 向量等。**执行任何 task 前必须先读修正案中对应的小节**；
+两者冲突时以修正案为准。§15 还调整了执行顺序：Task 3 提到 Task 2 之前。
+
 ## Global Constraints
 
 以下约束对**每个** task 隐式生效，值直接抄自 spec：

@@ -461,19 +461,47 @@ def inspect_wal(wal_path: Path, shm_path: Path | None,
 def apply_wal(params: CipherParams, db_out: Path, plan: WalPlan) -> WalApplyResult: ...
 ```
 
-### 6.6 `snapshot.py` — 一致性快照
+### 6.6 `snapshot.py` — 尽力获取一致快照
 
 QQ 采样时正在运行并写库，直接复制可能得到撕裂快照。
 
-**策略：**
+**措辞约束：** 本模块一律称「**尽力**获取一致快照」。三次重试本身**不构成**
+一致性证据；只有下述 identity 比对与 WAL 交叉校验才是证据。面向用户的文案、
+字段名与 docstring 都不得声称「已证明一致性」。
 
-1. 用 `msvcrt.locking(fd, LK_NBLCK, 3)` 对 `-shm` 偏移 **120** 处的 3 字节尝试**非阻塞**字节范围锁（SQLite 的 WAL-index / writer / checkpoint 锁区），成功则复制期间写入方被静默
-2. 拿不到锁不报错，照常复制，靠后续校验兜底
+**一致性不来自「page 1 能解密」。** 主库首页有效**不能**证明
+`db` / `wal` / `shm` 三件套来自同一时点。因此校验分四层：
+
+```
+FileIdentity = (exists, size, mtime_ns, volume_serial + file_index)
+
+1. 复制前记录 db/wal/shm 三者的 FileIdentity
+2. 复制三件套
+3. 复制后再次记录源三者的 FileIdentity
+4. 前后不一致 → 判定「复制期间源发生变化」→ 清理本轮副本 → 重试
+5. 一致 → 再做内容级校验：
+     主库：size % 4096 == 1024、page-1 salt 非全零、（有口令时）detect_params 命中
+     WAL ：inspect_wal(副本) 必须 valid 且 page_size == 4096；
+           reason == "wal_absent" 视为通过（无 WAL 是合法状态）
+```
+
+**`consistency` 三态：**
+
+| 值 | 条件 |
+|---|---|
+| `proven` | 拿到 shm 锁 **且** 前后 identity 一致 **且** WAL 校验通过 |
+| `best_effort` | 未拿到锁，但前后 identity 一致且 WAL 校验通过 |
+| `unverified` | identity 一致但 WAL 校验失败（仍返回，由上层决定） |
+
+**其余策略：**
+
+1. 用 `msvcrt.locking(fd, LK_NBLCK, 3)` 对 `-shm` 偏移 **120** 处的 3 字节尝试**非阻塞**字节范围锁（SQLite 的 WAL-index / writer / checkpoint 锁区），成功则复制期间写入方被静默。**该偏移与长度必须先在目标 Windows 上实证**，不得凭文档假定；实测不符时停下来报告而不是猜。加锁与解锁都不得改变文件内容。
+2. 拿不到锁不报错，`consistency` 降为 `best_effort`，靠上述校验兜底
 3. 成组复制 `nt_msg.db` + `-wal` + `-shm`；以及 `profile_info.db`、`group_info.db`、`rich_media.db`（各自带 wal/shm）
-4. **复制后立即校验**：剥头读 page 1，试解密，确认 `SQLite format 3\0` 魔数
-5. 校验失败重试，最多 3 次
+4. 目标目录中若存在上一轮的旧副本，**复制前必须先清除同名文件**，否则会把旧 WAL 与新 DB 混成一组
+5. 每次重试都要清理不完整副本，不得留残留
 6. 3 次都失败 → 中止并提示用户「请完全退出 QQ 后重试」（干净退出会触发 checkpoint）
-7. **永不写入 QQ 数据目录**；工作副本放在 `%LOCALAPPDATA%\QQExport\work\<uin>\`，用完可清
+7. **永不修改 QQ 数据目录下的文件**；唯一以 `"r+b"` 打开的是 `-shm`，仅为取锁、不写任何字节。工作副本放在 `%LOCALAPPDATA%\QQExport\work\<uin>\`，用完可清
 
 ### 6.7 `decrypt.py` — 编排
 
@@ -495,6 +523,28 @@ QQ 采样时正在运行并写库，直接复制可能得到撕裂快照。
 ```
 
 **corrupt_pages 非致命。** 调研显示较大的 `group_msg_table` 库常有损坏页，跳过并在报告中计数即可，不中止导出。
+
+**但「非致命」不等于「成功」。** `DecryptResult` 必须携带三态 `status`，
+且任一降级条件命中就压低状态——**禁止只追加 warning 却照常返回成功**：
+
+| 条件 | status |
+|---|---|
+| `corrupt_pages > 0` | 至多 `lossy` |
+| WAL 存在但 `plan.valid is False` | 至多 `lossy`，notes 写明「主库回退版」 |
+| `wal_signature_changed` 或 `stopped_early` 或 `wal_corrupt_frames > 0` | 至多 `lossy` |
+| `integrity_check != "ok"` | `failed` |
+| 产物页 1 缺 SQLite 魔数 | `failed` |
+| 源库本就无 `-wal`（`wal_reason == "wal_absent"`） | 不降级，属合法状态 |
+| 以上皆无 | `complete` |
+
+`status == "failed"` 时仍返回结果对象供诊断，但必须删除产物文件。
+doctor 与 CLI 必须如实呈现 status，`lossy` 不得显示为普通成功。
+
+**产物生命周期：** partial 文件名含 pid 与随机后缀（避免并发运行互相覆盖），
+写在目标同目录以保证同卷、满足 `os.replace` 的原子性。已存在的最终产物在
+成功前保持不变，成功后原子替换。进程被强杀后，下次启动按唯一前缀识别遗留
+partial，只清理自己的。故障注入测试须证明：写入途中抛异常时旧产物字节未变、
+无 partial 残留、源数据 identity 未变。
 
 ---
 
@@ -864,13 +914,20 @@ Edge 路径发现顺序：`C:\Program Files (x86)\Microsoft\Edge\Application\mse
 qqexport doctor                     # 全链路自检，打印环境与各阶段可用性报告
 qqexport list                       # 列出所有会话（类型/标题/消息数/时间范围）
 qqexport key scan                   # 只读内存扫描取口令
-qqexport key set <口令>             # 手动写入口令（工具不碰 QQ 进程）
+qqexport key set                    # 交互式输入口令（getpass，不回显）
+qqexport key set --from-stdin       # 管道/自动化场景
 qqexport key show                   # 只显示长度与 SHA-256 指纹前 8 位
 qqexport key clear                  # 删除缓存口令
 qqexport export --chat <id> --format txt,html,pdf [--out DIR]
 qqexport export --all --format html
 qqexport serve [--port 8765]        # 启动本地网页界面
 ```
+
+**`key set` 不接受位置参数形式的口令。** 位置参数会进入 shell history、`ps`
+输出与诊断采集，属不可接受的泄漏面。只支持交互式 `getpass`（不回显）与
+`--from-stdin`（读一行即弃，不落临时文件）。`getpass` 在无法关闭终端回显时
+会退化为读 stdin 并发 `GetPassWarning`，此时必须中止并提示改用 `--from-stdin`，
+不得在不回显失效的情况下继续读取。
 
 `--format` 默认 `html`。`--all` 与 `--chat` 互斥，`--chat` 可重复传多个。所有子命令支持 `--data-dir` / `--uin` / `--no-cache-key` / `--decode-voice`。
 
@@ -918,7 +975,11 @@ POST /api/key/scan                # 触发内存扫描
 6. QQ.exe 是否在运行（内存扫描的前提）
 7. 口令：缓存命中 / 扫描成功 / 失败
 8. 参数探测命中的 (KDF, HMAC, reserve) 组合
-9. 解密 + 页 1 魔数校验
+9. 解密 + 页 1 魔数校验；**解密前先做容量预估**——所需工作空间按
+   `(主库 size + wal size) × 3`（源快照 + 明文产物 + 余量）实算，与目标卷
+   可用空间比较，不足则本项判 ⚠️ 并给出所需/可用的**字节数**（不展示完整路径）。
+   估算必须按实际文件大小算，**不得把本文档 §3 里的 335 MB 样本值写成常数**。
+   （原第 15 项「剩余空间」的 P0 部分由此吸收，不新增第 12 项检查以免全量重编号。）
 10. WAL 帧数与最后 commit 位置
 11. `sqlite_master` 中目标表是否存在，关键列是否齐全
 12. 抽样解析 N 条消息，统计各 segment 类型与未知字段号分布
@@ -977,8 +1038,22 @@ POST /api/key/scan                # 触发内存扫描
    - pdf：中文正常渲染不断字，单条消息不跨页断裂，图片在位
 5. 导出内容与 QQ 客户端内肉眼比对，**最近的消息在**（证明 WAL 恢复生效 —— 这是最容易静默失败的点）
 6. 导出报告计数自洽：`总数 == 成功 + 降级 + 失败`
-7. 全程 QQ 数据目录 mtime 无变化（证明只读）
-8. 连续两次导出结果字节一致（证明确定性）
+7. 只读性分两种条件记录，**不得混为一谈**：
+   - **QQ 完全退出**（用户手动配合）：源目录逐文件比对
+     `(size, mtime_ns, volume_serial + file_index)` 三元组全部不变 → 记 `PASS`
+   - **QQ 运行中**：只能断言「无文件被我们删除」；出现新增或内容变化记
+     `SKIP(未验证)`，因为那是 QQ 自己在写，不能归因于本工具
+8. 连续两次导出结果字节一致（证明确定性）。**必须对同一份快照重复解密**——
+   若两次都重新快照，QQ 在期间写库会把「源变化」误判为「解密不确定」。
+   整库比较用流式 SHA-256，不得两次 `read_bytes()` 把数百 MB 同时载入内存。
+9. 明文产物确实被清理：`tempfile.TemporaryDirectory()` 上下文退出后目录不存在，
+   无 `.partial` 残留，`git status` 干净。**注意 pytest 的 `tmp_path` 默认保留
+   最近 3 次运行的目录，不是清理保证**——凡产生明文库的测试一律用
+   `TemporaryDirectory`，并在退出前关闭全部 SQLite 连接与文件句柄
+   （Windows 上句柄未关会让清理抛 `PermissionError`）。
+10. 汇总必须三态分列 `PASS` / `WARN` / `SKIP(未验证)`。任何一项 SKIP 都使
+    总体结论为「部分验收」，**不得表述为全绿**。没有有效 WAL commit 时结论
+    必须写成「本次没有可验证的 WAL 更新」，不得据此声明 WAL 恢复通过。
 
 ---
 
