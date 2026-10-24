@@ -1,0 +1,18 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+.venv/
+
+# 解密产物与工作副本：含明文聊天记录，绝不入库
+work/
+*.decrypted.db
+*.decrypted.db-*
+
+# 口令缓存（DPAPI 保护，但仍不入库）
+keys.json
+
+# fixture：需人工确认不含隐私后才用 git add -f 提交
+tests/fixtures/*.bin

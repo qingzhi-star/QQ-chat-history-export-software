@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qqexport"
+version = "0.1.0"
+description = "导出本机自有 QQ NT 账号的聊天记录（仅限本人自有数据的本地使用）"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+dependencies = ["cryptography>=43"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+qqexport = "qqexport.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["qqexport*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = '-m "not live"'
+markers = [
+    "live: 需要本机实时运行的 QQ 客户端，默认跳过（用 -m live 显式运行）",
+    "fixture: 需要 tests/fixtures/ 下由 tools/capture_fixtures.py 采集并经人工确认的文件，缺失则跳过",
+]
