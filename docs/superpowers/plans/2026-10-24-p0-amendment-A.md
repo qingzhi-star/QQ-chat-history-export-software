@@ -526,6 +526,21 @@ CHECK_SPECS: tuple[CheckSpec, ...]   # CheckSpec(index, name, inputs,
 `_run` 捕获 `Exception`，**不得**捕获 `BaseException`。新增测试：
 某项检查抛 `KeyboardInterrupt` 时必须向外传播，而不是变成一条 `fail`。
 
+### 9.7 承接 Task 2 遗留义务：盘符扫描截断信号
+
+Task 2 的 `discover_accounts` 按控制器裁定保持 `-> list[QQAccount]` 签名，
+因此当盘符扫描**被 `MAX_VISITED_DIRS` 截断但仍找到了账号**时，截断这一事实
+无处上报（`ScanAborted` 只在「截断且零结果」时抛）。
+
+Task 9 的 doctor 必须补上这一环：`find_tencent_files` 是公开函数且返回
+`(hits, truncated)`，当 doctor 在 `scan_drives=True` 路径下工作时，
+**必须直接调用它并把 `truncated` 传进检查 3 或检查 4 的 detail**，
+文案形如「盘符扫描在第 N 个目录处达到上限而中止，可能未列出全部账号」。
+默认路径（不扫盘）不受影响。
+
+若 Task 9 的实现者认为这需要改 `discover_accounts` 的签名，停下来报告，
+不要自行改——那是控制器的裁定范围。
+
 ---
 
 ## 10. Task 10 — `cli.py`
