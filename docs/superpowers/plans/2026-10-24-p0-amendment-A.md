@@ -179,20 +179,36 @@ CLI 与 doctor 一律经 `select_account` 取账号。掩码规则：`"****" + u
 round-trip 会**双双抵消而通过**，真机解密才暴露。必须引入与被测代码无关的
 外部参考值。
 
-新增 `tests/test_sqlcipher_kat.py`，至少覆盖：
+新增 `tests/test_sqlcipher_kat.py`，覆盖四层：
 
-1. **PBKDF2-HMAC-SHA512**：对 RFC 6070 风格的手工可核算输入
-   （`P=b"password"`, `S=b"salt"`, `c=1`, `dkLen=32`）断言输出等于
-   `hashlib.pbkdf2_hmac` 之外**独立写出的**参考实现结果，或直接内联
-   预先用其他工具算好的十六进制期望值并注明来源。
-2. **AES-256-CBC**：对 NIST SP 800-38A F.2.5 的公开向量断言
-   （key/IV/plaintext/ciphertext 全部内联为十六进制字面量，注明来源）。
-3. **HMAC-SHA1**：对 RFC 2202 测试用例 1 与 2 断言（内联期望值）。
-4. **页级组合 KAT**：用上述独立原语**手工**构造一个 4096 字节密网页
-   （不走 `fake_sqlcipher`），断言 `decrypt_page` 还原出预期明文。
-   这条是真正能抓住「两端同时错」的测试。
+1. **`derive_keys` 输出钉死。** 对固定的 `passphrase` 与 `salt`，断言
+   `aes_key` 与 `mac_key` 等于内联的十六进制期望值。期望值的**产生方式**：
+   在本机用 `hashlib.pbkdf2_hmac` 单独算一次、把结果硬编码进测试，并在
+   docstring 里写明「provenance: Python 3.14 / OpenSSL <版本>，
+   参数 KDF_ITER=4000、FAST_ITER=2、mac_salt = salt XOR 0x3A」。
+   这条抓的是**接线错误**（用错迭代数、忘了 0x3A、KDF 选了 sha1 而非 sha512），
+   不是 hashlib 本身的正确性——后者由 OpenSSL 保证。
 
-所有向量必须注明来源（RFC / NIST 文档编号），且必须是合成数据。
+2. **HMAC-SHA1 对 RFC 2202 公开用例。** 用测试用例 1 与 2。
+   **不要相信任何人凭记忆写出的摘要值**（包括本修正案）：实现者必须
+   联网核对 RFC 2202 原文后再内联期望值，并在 docstring 注明来源章节。
+   若核对结果与本文件描述不符，以 RFC 为准。
+
+3. **AES-256-CBC 对 NIST SP 800-38A F.2.5 公开向量。** 同上：
+   实现者必须联网取原文的 key / IV / plaintext / ciphertext 十六进制，
+   注明来源，不得凭记忆填写。
+
+4. **页级组合 KAT（最关键的一条）。** 在测试文件内**不使用
+   `fake_sqlcipher`**，只用 `hashlib` + `cryptography` 原语，按 spec §6.4 的
+   文字描述独立拼出一个 4096 字节密网页（自己算 salt 派生、自己拼
+   密文+IV+tag+padding、自己算 HMAC），然后断言 `decrypt_page` 还原出预期明文。
+   这条是唯一能抓住「加解密两端同时理解错」的测试，因为它绕开了共享的
+   helper 代码路径。
+
+所有向量必须注明来源（RFC / NIST 文档编号或本机计算方式），且必须是合成数据。
+**若第 2、3 条无法联网核对到权威值，就把该条改成第 1 条的形式（本机计算 +
+注明 provenance），并在报告中说明未能取得外部权威值**——不得凭记忆填入
+看似合理的十六进制，那会制造假权威，比没有测试更糟。
 
 ### 3.2 cipher 指纹是观测值，不是契约
 
