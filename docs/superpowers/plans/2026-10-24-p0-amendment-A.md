@@ -244,21 +244,114 @@ round-trip 会**双双抵消而通过**，真机解密才暴露。必须引入�
   `dbsize` 不得成为最终截断长度
 - **重复页号**：后写帧覆盖先写帧（原计划已有，保留）
 - **commit 帧之后还有未提交帧**：这些帧绝不写入
-- **页号越界**（`pgno == 0` 或 `pgno > commit_size`）：拒绝写入并计入
-  `corrupt_frames`，不得让 `db.seek()` 落到负偏移或把文件撑大
+- **页号非法分两类处理（R18 修正，见下）**
 - **frame HMAC 失败分别出现在 commit 之前与之后**：两种情况的截断长度不同
 - **截断尾帧**（原计划已有，保留）
 - **inspect 与 apply 之间 WAL 被改写**（原计划已有，保留）
 
+#### R18 —— 修正本节原文：`pgno > commit_size` 是良性帧，不是损坏
+
+本节原文要求「页号越界（`pgno == 0` 或 `pgno > commit_size`）：拒绝写入并计入
+`corrupt_frames`」。**这条把两种性质完全不同的情况混为一谈，Task 4 评审实证推翻了它：**
+
+- **`pgno == 0` 是真损坏。** SQLite 的 `walDecodeFrame` 也拒绝它，且
+  `db.seek((0-1)*4096)` 会得到负偏移、在 Windows 上抛 `OSError`。
+  → **硬中止**，计入 `corrupt_frames`。
+- **`pgno > 最终 commit_size` 是良性帧**，SQLite 自己**不**视为损坏：
+  该帧照写，随后被截断掉。它在两种真实场景下可达：
+  1. 跨 commit：前一个 commit 把库涨到 N 页，后一个 commit 收缩到 M < N 页
+     （SQLite 的 `releasePage()` 置 `bDoTruncate`，`sqlite3BtreeCommit` 调
+     `sqlite3PagerTruncateImage` 压低 commit 帧的 `nSize`）
+  2. 单事务内：先追加高页号帧，commit 前又释放，于是 commit 帧的 `dbsize`
+     低于已入帧的最高页号
+
+  评审实测：WAL `[pgno9 dbsize0, pgno10 dbsize10, pgno2 dbsize8]` 对 10 页库，
+  按原文实现得到 `applied=0, corrupt=1, stopped=True, trunc=0` ——
+  **一个完全合法的 WAL 的全部贡献被丢弃**，且健康帧被误标为损坏。
+  → **跳过该帧（`continue`）而非中止（`break`）**，**不计入** `corrupt_frames`，
+  改为在 `notes` 追加一条说明（保留可观测性，且不动已冻结的字段集）。
+
+这正是本 task 要防的「最新消息静默丢失」，只是被 §0.1 降级成 `lossy` 而非彻底静默。
+
+#### R19 —— 新增：pass 2 绝不得写入未提交事务的帧
+
+评审实测发现原 brief 的 Step 4 参考实现有真缺陷：当 pass 2 因 HMAC 失败或页号
+守卫提前 `break` 时，**此前已写入的帧会留在产物里**，其中可能包含属于
+「从未提交的事务」的帧，而 `target_pages` 仍为 0 → 不截断。
+
+实测 WAL `[pgno2 dbsize0, pgno3 dbsize0(HMAC坏), pgno4 dbsize6]` 得到
+`applied=1, corrupt=1, trunc=0`，且**未提交的 page 2 被写进了产物**。
+
+**SQLite 的原子性边界是 commit 帧。** 写入半个事务会让 page 2 引用从未写过的结构，
+即产物**结构性损坏**——`quick_check` 随之失败、状态被判 `failed`，
+于是「本可得到一个稍旧但完好的库」变成「什么都拿不到」。
+
+**裁定：** pass 1 必须在可应用范围内记录**最后一个 commit 帧的帧号与其 `dbsize`**；
+pass 2 的回放上界压到该帧号，截断长度用该 `dbsize`。
+若可应用范围内**没有任何 commit 帧**，则一帧都不写、库保持原样。
+
+配套：brief 中 `test_apply_stops_at_page_hmac_failure_keeping_earlier_frames`
+断言「保留较早帧」（`out[PAGE_SZ+100] == 0x11`）—— **该断言钉住的是错误行为，
+必须反转**为 `frames_applied == 0` 且 `db.read_bytes() == before`。
+测试名里的 "keeping_earlier_frames" 本身就是错误观念：较早的**未提交**帧绝不能保留。
+
+### 4.1b `WalApplyResult` 的冻结字段集含 `notes`
+
+**R20：** brief 的 Produces 块列了 6 个字段，但 brief 自己的 Step 4 参考实现
+定义并使用了第 7 个 `notes: list[str]`。两者自相矛盾，实现按代码走是对的。
+裁定：**Produces 块补上 `notes`**，冻结字段集为 7 个。理由：`notes` 是 §0.1
+三态诊断的承载处，且 R18 的跳过说明也要写进它——它是 load-bearing 的，
+不能删。字段位于末尾且有默认值，Task 8 的位置参数构造不受影响。
+
+### 4.1c 一并修掉的评审 Minor（本轮内）
+
+- `test_inspect_stops_at_recycled_frame_salt` **不具鉴别力**：删掉 salt 比较后
+  测试仍通过，因为陈旧 WAL 代的头 seed 不同，累计校验和会先拒绝该帧。
+  **salt 检查目前零覆盖**，且实现者报告第 10 条对它的声称是假的。
+  必须重造 fixture：salt 不匹配但校验和按**当前**头 seed 重算，
+  使删掉 salt 比较真的会让测试失败。
+- `_frames_raw` 复制了 `_iter_frames` 的读循环且**不重复校验任何东西**，
+  留下 TOCTOU 窗口：若 QQ 在 pass 间 checkpoint 并重启 WAL，pass 2 会回放
+  新一代的帧（页密钥相同故 HMAC 通过）却沿用旧的 `applicable` 计数。
+  改为复用 `_iter_frames` 并以 `applicable` 为上限，零成本关闭该窗口。
+- `wal.py` 的 `state[0] >= last_commit` 应为 `>= frame_count`
+  （约束原文是「`mxFrame` 小于扫描所得」，`frame_count` 才是扫描结果）。
+- `nPage` 被返回却从未使用：要么与 `commit_size` 交叉校验，要么从元组里去掉。
+  裁定：**做交叉校验**（`nPage == 0` 或 `nPage == commit_size` 时才算一致）。
+- `fake_sqlcipher.plain(tag)` / `test_wal.py` 的 `plain(tag)` 把整 4096 字节
+  都填成 `tag`，含 reserve 区——那不是合法的 SQLCipher 明文页。
+  当前无断言触碰页尾所以无害，但是个陷阱。改为尾部 reserve 区填零。
+
+### 4.1d 本轮**不**修、记录在案的项
+
+- **spec §6.5 要求的 `-shm` `iVersion`（偏移 0）与页大小编码（偏移 14）交叉校验：延后。**
+  裁定理由：`-shm` 在本设计中**仅**用于交叉验证，任何缺陷都 fail-safe 退化为
+  「仅扫描 WAL」，不影响正确性；而我对 WalIndexHdr 偏移 14 的确切语义
+  （u16 页大小编码，1 表示 65536）只有 chatlog-keeper 一处二手依据，
+  不足以据此写死断言。**代价：** spec §6.5 的措辞比实现更严，
+  需把 spec 改为「salt + 校验和 + 字节序标志 + mxFrame + nPage」以与实现一致。
+- 三个 shm 回退测试命名不准（`b"\x99"*136` 实为两份相同副本，
+  触发的是字节序标志分支而非「垃圾」），且缺 `-shm` 过短的覆盖
+- `reason` 字符串未冻结，仅 `"ok"` / `"wal_absent"` / `"page_size_mismatch"`
+  被测试钉住；Task 9 的 doctor 不得对其它值做字符串匹配
+- `hdr` 在 `try` 内绑定、`try` 外使用（当前每条失败路径都先 return，故正确但脆）
+- 只读文件测试未断言 `db.read_bytes() == before`，且在 POSIX 上以 root 运行会失败
+
 ### 4.2 回放只写临时明文库
 
 `apply_wal` 的目标 `db_path` 必须始终是解密产物（临时明文库），
-绝不可能是 QQ 数据目录下的文件。新增测试：传入一个位于只读目录的路径时
+绝不可能是 QQ 数据目录下的文件。新增测试：传入一个无法写入的路径时
 抛 `OSError` 而不是静默成功。
+
+**Windows 实测补充（R21）：** Windows **忽略目录上的只读属性**，
+因此「只读目录」测不出来。改为把目标**文件**设为只读（`S_IREAD`），
+断言 `OSError`（`PermissionError` 是其子类）。该写法在 POSIX 上同样成立，
+比目录方案更可移植。
 
 ### 4.3 结构先冻结
 
 Task 8 集成前，`WalPlan` / `WalApplyResult` 的字段不得再改。
+冻结集以 §4.1b 为准（`WalApplyResult` 含 `notes`，共 7 字段）。
 若集成时发现需要新字段，走修正案而不是就地改。
 
 ---
