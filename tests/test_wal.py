@@ -13,10 +13,16 @@ PASSPHRASE = b"#8FakeKeyForTest"
 DB_SALT = bytes(range(16))
 AES_KEY, MAC_KEY = sc.derive_keys(PASSPHRASE, DB_SALT, "sha512")
 KW = dict(aes_key=AES_KEY, mac_key=MAC_KEY, mac="sha1", reserve=48, db_salt=DB_SALT)
+RESERVE = 48
 
 
 def plain(tag: int) -> bytes:
-    return bytes([tag]) * sc.PAGE_SZ
+    """正文全为 tag 的明网页，尾部 reserve（48 字节）区置零。
+
+    与 decrypt_page 的输出形态一致（保留区零填充），round-trip 才字节相等；
+    SQLCipher 的明网页保留区本就无语义，填 tag 是个陷阱（M5）。
+    """
+    return bytes([tag]) * (sc.PAGE_SZ - RESERVE) + b"\x00" * RESERVE
 
 
 def write(tmp_path: Path, name: str, data: bytes) -> Path:
@@ -139,10 +145,26 @@ def test_inspect_stops_at_bad_frame_checksum(tmp_path):
 
 
 def test_inspect_stops_at_recycled_frame_salt(tmp_path):
-    """salt 不匹配 = 上一轮 checkpoint 遗留的已回收帧，有效序列到此为止。"""
+    """salt 不匹配 = 上一轮 checkpoint 遗留的已回收帧，有效序列到此为止。
+
+    M1 判别性构造：陈旧帧的 salt 是错的，但其累计校验和按 **live 头的
+    seed** 重算——校验和拦不住它，只有 salt 比较能拦。删掉 wal.py 里的
+    salt 比较（`struct.unpack(">II", fh[8:16]) != hdr.salt`），陈旧帧会
+    被计入，frame_count 变成 2，本测试必失败。
+    """
     good = fake.build_wal([(2, plain(2), 4)], **KW)
-    stale = fake.build_wal([(3, plain(3), 9)], salt=(0xAAAAAAAA, 0xBBBBBBBB), **KW)
-    blob = good + stale[32:]
+    frame_sz = wal.WAL_FRAME_HEADER_SZ + sc.PAGE_SZ
+    # live 头的 seed → 帧 1 之后的累计校验和
+    s0, s1 = fake.wal_checksum(good[:24], 0, 0, False)
+    s0, s1 = fake.wal_checksum(good[32:32 + 8] + good[32 + 24:32 + frame_sz],
+                               s0, s1, False)
+    # 陈旧帧：错误 salt，密文照常，校验和用 live seed 续算 → 结构上"有效"
+    cipher = fake.encrypt_page(plain(3), 3, aes_key=AES_KEY, mac_key=MAC_KEY,
+                               mac="sha1", reserve=RESERVE)
+    stale_fh = struct.pack(">II", 3, 9) + struct.pack(">II", 0xAAAAAAAA, 0xBBBBBBBB)
+    s0, s1 = fake.wal_checksum(stale_fh[:8] + cipher, s0, s1, False)
+    blob = good + stale_fh + struct.pack(">II", s0, s1) + cipher
+
     plan = wal.inspect_wal(write(tmp_path, "w", blob))
     assert plan.frame_count == 1
     assert plan.last_commit_frame == 1 and plan.commit_size == 4
@@ -207,6 +229,36 @@ def test_inspect_falls_back_when_shm_mxframe_below_scan(tmp_path):
     assert plan.last_commit_frame == 2 and plan.commit_size == 5
 
 
+def test_inspect_falls_back_when_shm_mxframe_below_frame_count(tmp_path):
+    """M3：约束是「mxFrame 小于**扫描所得帧数**」。此 WAL 扫描到 2 帧、
+    最后 commit 是帧 1，mxFrame=1 满足旧的弱上界（>= last_commit）但不满足
+    frame_count —— 必须降级。改回 `>= last_commit` 本测试必失败。"""
+    blob = fake.build_wal([(2, plain(2), 4), (3, plain(3), 0)], **KW)
+    w = write(tmp_path, "nt_msg.db-wal", blob)
+    shm = write(tmp_path, "nt_msg.db-shm",
+                fake.build_shm(page_size=sc.PAGE_SZ, mx_frame=1, n_page=4))
+    plan = wal.inspect_wal(w, shm)
+    assert plan.valid and plan.frame_count == 2 and plan.last_commit_frame == 1
+    assert plan.shm_validated is False
+
+
+def test_inspect_falls_back_when_shm_npage_disagrees(tmp_path):
+    """M4：nPage 既不为 0 也不等于 commit_size → shm 与 WAL 不自洽，降级。
+    删掉 nPage 交叉验证，本测试必失败（mxFrame 是对上的）。"""
+    blob = fake.build_wal([(2, plain(2), 0), (3, plain(3), 5)], **KW)
+    w = write(tmp_path, "nt_msg.db-wal", blob)
+    shm = write(tmp_path, "nt_msg.db-shm",
+                fake.build_shm(page_size=sc.PAGE_SZ, mx_frame=2, n_page=9))
+    plan = wal.inspect_wal(w, shm)
+    assert plan.valid and plan.commit_size == 5
+    assert plan.shm_validated is False
+    # nPage == 0（未知）不算矛盾，仍应通过交叉验证
+    shm0 = write(tmp_path, "nt_msg0.db-shm",
+                 fake.build_shm(page_size=sc.PAGE_SZ, mx_frame=2, n_page=0))
+    w0 = write(tmp_path, "nt_msg0.db-wal", blob)
+    assert wal.inspect_wal(w0, shm0).shm_validated is True
+
+
 # ---------- apply_wal ----------
 
 def test_apply_writes_page_at_correct_offset_and_truncates(tmp_path):
@@ -239,15 +291,19 @@ def test_apply_recovers_newest_version_when_page_written_twice(tmp_path):
     assert page2[100] == 0x22                      # 后写的帧覆盖先写的
 
 
-def test_apply_stops_at_page_hmac_failure_keeping_earlier_frames(tmp_path):
-    """帧 2 的密文被篡改（帧校验和已重算，故 SQLite 层放行），
-    但 SQLCipher 页 HMAC 必然失败 → 停止应用后续帧，帧 1 的结果保留。
+def test_apply_hmac_failure_before_commit_discards_uncommitted_frames(tmp_path):
+    """R19：原子性边界是 commit 帧。帧 2 密文被篡改（帧校验和已重算，
+    SQLite 层放行），页 HMAC 必然失败。帧 1 与帧 2 属于同一个**未提交**
+    事务——它的页绝不允许写进数据库；整个事务被丢弃，库保持逐字节原样。
 
     这是「页 HMAC 失败出现在最后 commit 之前」的情形：截断长度为 0。
     与 test_apply_hmac_failure_after_last_commit... 成对，两者截断长度必须不同。
+    （旧行为：帧 1 立即落盘 → applied=1、未提交的页 2 留在输出里——若
+    回退到「边解密边写」的实现，db.read_bytes() == before 必失败。）
     """
     db = make_db(tmp_path, n_pages=4, filler=0xAA)
-    blob = fake.build_wal([(2, plain(0x11), 0),      # 帧 1，非 commit
+    before = db.read_bytes()
+    blob = fake.build_wal([(2, plain(0x11), 0),      # 帧 1，未提交
                            (3, plain(0x22), 0),      # 帧 2，将被篡改
                            (4, plain(0x33), 6)],     # 帧 3，commit
                           **KW)
@@ -260,14 +316,10 @@ def test_apply_stops_at_page_hmac_failure_keeping_earlier_frames(tmp_path):
     params = sc.CipherParams("sha512", "sha1", 48, AES_KEY, MAC_KEY)
     res = wal.apply_wal(params, w, db, plan)
     assert res.corrupt_frames == 1
-    assert res.frames_applied == 1 and res.pages_written == 1   # 只应用了帧 1
+    assert res.frames_applied == 0 and res.pages_written == 0
     assert res.stopped_early is True
-    assert res.truncated_to_pages == 0                          # 未到 commit，不截断
-
-    out = db.read_bytes()
-    assert len(out) == 4 * sc.PAGE_SZ
-    assert out[sc.PAGE_SZ + 100] == 0x11        # 帧 1（页 2）已写入
-    assert out[2 * sc.PAGE_SZ + 100] == 0xAA    # 帧 2/3（页 3、4）未被写入
+    assert res.truncated_to_pages == 0
+    assert db.read_bytes() == before        # 未提交事务一个字节都不许落地
 
 
 def test_inspect_does_not_detect_page_hmac_corruption(tmp_path):
@@ -404,27 +456,66 @@ def test_apply_rejects_pgno_zero(tmp_path):
     assert db.read_bytes() == before
 
 
-def test_apply_rejects_pgno_beyond_commit_size(tmp_path):
-    """pgno > commit_size：拒绝写入、计入 corrupt_frames，不得把文件撑大。"""
+def test_apply_skips_pgno_beyond_commit_size_and_continues(tmp_path):
+    """R18：pgno > commit_size 不是损坏，而是合法形态——事务内先追加页、
+    commit 前又释放（SQLite releasePage/bDoTruncate 会降低 commit 帧的
+    nSize），walDecodeFrame 也不把高页号当损坏。只跳过该帧：不计入
+    corrupt_frames、不置 stopped_early、notes 给出解释；后续有效帧照常
+    应用，截断到最后的有效 commit，文件不被撑大。
+    （旧行为：break + corrupt_frames=1 → 本测试的 corrupt==0/applied==1
+    断言必失败。）"""
     db = make_db(tmp_path, n_pages=4, filler=0xAA)
-    before = db.read_bytes()
-    blob = fake.build_wal([(6, plain(0x11), 4)], **KW)   # pgno 6 > commit_size 4
+    blob = fake.build_wal([(6, plain(0x11), 4),      # 帧 1：pgno 6 > commit_size 4 → 跳过
+                           (2, plain(0x22), 4)],     # 帧 2：有效，照常应用
+                          **KW)
     w = write(tmp_path, "nt_msg.db-wal", blob)
     plan = wal.inspect_wal(w)
-    assert plan.valid and plan.commit_size == 4
+    assert plan.valid and plan.commit_size == 4 and plan.last_commit_frame == 2
 
     params = sc.CipherParams("sha512", "sha1", 48, AES_KEY, MAC_KEY)
     res = wal.apply_wal(params, w, db, plan)
-    assert res.corrupt_frames == 1 and res.frames_applied == 0
-    assert res.stopped_early is True and res.truncated_to_pages == 0
-    assert db.read_bytes() == before
+    assert res.corrupt_frames == 0                   # 不是损坏
+    assert res.stopped_early is False                # 不中止回放
+    assert res.frames_applied == 1 and res.pages_written == 1
+    assert res.truncated_to_pages == 4               # 截断到最后的有效 commit
+    assert any("skipped" in n for n in res.notes)    # notes 有解释行
+
+    out = db.read_bytes()
+    assert len(out) == 4 * sc.PAGE_SZ                # 文件没被 pgno 6 撑大
+    assert out[sc.PAGE_SZ + 100] == 0x22             # 后续帧确实被应用
+
+
+def test_apply_reviewer_scenario_shrinking_commit_keeps_contribution(tmp_path):
+    """R18 评审原始场景：[pgno9 dbsize0, pgno10 dbsize10, pgno2 dbsize8]
+    对 10 页库。旧行为 applied=0, corrupt=1, stopped=True, trunc=0——整个
+    合法 WAL 的贡献被丢弃。新行为：帧 1/2 页号超出最终库大小（8 页）被
+    跳过，帧 3 的真实贡献存活，截断到 8 页。"""
+    db = make_db(tmp_path, n_pages=10, filler=0xAA)
+    blob = fake.build_wal([(9, plain(0x99), 0),      # 帧 1：非 commit，pgno 9 > 8
+                           (10, plain(0x10), 10),    # 帧 2：中间 commit，pgno 10 > 8
+                           (2, plain(0x22), 8)],     # 帧 3：最后 commit，dbsize=8
+                          **KW)
+    w = write(tmp_path, "nt_msg.db-wal", blob)
+    plan = wal.inspect_wal(w)
+    assert plan.valid and plan.last_commit_frame == 3 and plan.commit_size == 8
+
+    params = sc.CipherParams("sha512", "sha1", 48, AES_KEY, MAC_KEY)
+    res = wal.apply_wal(params, w, db, plan)
+    assert res.corrupt_frames == 0 and res.stopped_early is False
+    assert res.frames_applied == 1 and res.pages_written == 1
+    assert res.truncated_to_pages == 8
+    assert sum("skipped" in n for n in res.notes) == 2
+
+    out = db.read_bytes()
+    assert len(out) == 8 * sc.PAGE_SZ                # 结果页数 = 最后 commit 的 8
+    assert out[sc.PAGE_SZ + 100] == 0x22             # WAL 的真实贡献存活
 
 
 def test_apply_hmac_failure_after_last_commit_truncates_to_earlier_commit(tmp_path):
-    """与 test_apply_stops_at_page_hmac_failure_keeping_earlier_frames 成对：
+    """与 test_apply_hmac_failure_before_commit_discards_uncommitted_frames 成对：
     帧 1 已 commit（dbsize=5），帧 2（同为 commit，dbsize=7）页 HMAC 失败
     → 截断到较早 commit 的 5 页。失败在 commit 之前时截断长度为 0——
-    两种情形的截断长度必须不同。"""
+    两种情形的截断长度必须不同。产物是一个有效但略陈旧的库，而不是一无所有。"""
     db = make_db(tmp_path, n_pages=4, filler=0xAA)
     blob = fake.build_wal([(2, plain(0x11), 5),      # 帧 1：commit，dbsize=5
                            (3, plain(0x22), 7)],     # 帧 2：commit，dbsize=7，将被篡改
@@ -443,8 +534,69 @@ def test_apply_hmac_failure_after_last_commit_truncates_to_earlier_commit(tmp_pa
 
     out = db.read_bytes()
     assert len(out) == 5 * sc.PAGE_SZ
-    assert out[sc.PAGE_SZ + 100] == 0x11             # 帧 1（页 2）已写入
+    assert out[sc.PAGE_SZ + 100] == 0x11             # 较早 commit 的页保留
     assert out[4 * sc.PAGE_SZ: 4 * sc.PAGE_SZ + 4] == b"\x00" * 4   # 扩展区零填充
+
+
+def test_apply_hmac_failure_mid_transaction_keeps_commit_drops_pending(tmp_path):
+    """R19 核心场景：HMAC 失败发生在有效 commit **之后**、第二个事务中途。
+    帧 2 可正常解密但属于未提交事务，帧 3 被篡改 → 第二个事务整体丢弃
+    （帧 2 的页绝不能出现在输出里），截断到帧 1 commit 的 dbsize=4。
+    判别性：旧实现边解密边写，帧 2 的页会留在输出（0x22），本测试的
+    `out[2*PAGE_SZ+100] == 0xAA` 断言必失败。"""
+    db = make_db(tmp_path, n_pages=4, filler=0xAA)
+    blob = fake.build_wal([(2, plain(0x11), 4),      # 帧 1：commit，dbsize=4，已落盘
+                           (3, plain(0x22), 0),      # 帧 2：第二事务，未提交，可解密
+                           (4, plain(0x33), 0),      # 帧 3：将被篡改 → HMAC 失败
+                           (5, plain(0x44), 6)],     # 帧 4：第二事务的 commit，不可达
+                          **KW)
+    blob = fake.tamper_page_and_resign(blob, 3)
+    w = write(tmp_path, "nt_msg.db-wal", blob)
+
+    plan = wal.inspect_wal(w)
+    assert plan.valid and plan.last_commit_frame == 4 and plan.commit_size == 6
+
+    params = sc.CipherParams("sha512", "sha1", 48, AES_KEY, MAC_KEY)
+    res = wal.apply_wal(params, w, db, plan)
+    assert res.corrupt_frames == 1 and res.stopped_early is True
+    assert res.frames_applied == 1 and res.pages_written == 1
+    assert res.truncated_to_pages == 4               # 较早 commit，而不是 6 或 0
+
+    out = db.read_bytes()
+    assert len(out) == 4 * sc.PAGE_SZ
+    assert out[sc.PAGE_SZ + 100] == 0x11             # 已提交页保留 → 有效但略陈旧
+    assert out[2 * sc.PAGE_SZ + 100] == 0xAA         # 未提交的帧 2 页绝不出现
+
+
+def test_apply_degrades_to_reached_commit_when_structure_breaks_mid_wal(tmp_path):
+    """R19 退化路径：inspect 之后帧 2 起的校验和被就地破坏（WAL 头未变，
+    签名复查放行），pass 1 只能到帧 1。回放与截断都以**实际到达的**
+    commit（帧 1，dbsize=4）为准，而不是 plan 里的 last_commit_frame=3 /
+    commit_size=6。判别性：若回放上界/截断长度改回 plan 的原值，
+    truncated_to_pages 会变成 6、文件被零填充撑大，本测试必失败。"""
+    db = make_db(tmp_path, n_pages=4, filler=0xAA)
+    blob = fake.build_wal([(2, plain(0x11), 4),      # 帧 1：commit，dbsize=4
+                           (3, plain(0x22), 0),      # 帧 2：将被就地破坏校验和
+                           (4, plain(0x33), 6)],     # 帧 3：plan 里的最后 commit
+                          **KW)
+    w = write(tmp_path, "nt_msg.db-wal", blob)
+    plan = wal.inspect_wal(w)
+    assert plan.valid and plan.last_commit_frame == 3 and plan.commit_size == 6
+
+    raw = bytearray(w.read_bytes())
+    frame_sz = wal.WAL_FRAME_HEADER_SZ + sc.PAGE_SZ
+    raw[32 + frame_sz + 20] ^= 0xFF                  # 破坏帧 2 的校验和（头不动）
+    w.write_bytes(bytes(raw))
+
+    params = sc.CipherParams("sha512", "sha1", 48, AES_KEY, MAC_KEY)
+    res = wal.apply_wal(params, w, db, plan)
+    assert res.stopped_early is True
+    assert res.frames_applied == 1 and res.truncated_to_pages == 4   # 不是 6
+
+    out = db.read_bytes()
+    assert len(out) == 4 * sc.PAGE_SZ                # 不按 plan 的 6 页撑大
+    assert out[sc.PAGE_SZ + 100] == 0x11             # 实际到达的 commit 页保留
+    assert out[2 * sc.PAGE_SZ + 100] == 0xAA         # 帧 2 及以后绝不写入
 
 
 # ---------- 修正案 A §4.2：回放只写可写的解密产物 ----------
