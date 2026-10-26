@@ -369,10 +369,20 @@ class FileIdentity:
     exists: bool
     size: int
     mtime_ns: int
-    inode_or_index: tuple[int, int]   # Windows: (volume serial, file index)
+    dev: int        # os.stat().st_dev —— Windows 上即卷序列号的映射
+    ino: int        # os.stat().st_ino —— Windows 上即文件索引
 
 def file_identity(path: Path) -> FileIdentity: ...
 ```
+
+**R22 —— 用 `os.stat` 即可，不要调 Win32 API。** 本节原文写的是
+「volume serial + file index」，容易被理解成需要 `CreateFileW` +
+`GetFileInformationByHandle`。控制器在本机 Python 3.14.6 实测：
+`st_file_index` **不存在**，但 `st_dev` 与 `st_ino` 均已正确填充
+（Windows 上 `st_ino` 就是文件索引、`st_dev` 就是卷序列号的映射）。
+因此 `(st_dev, st_ino, st_size, st_mtime_ns)` 四元组全部来自 `os.stat`，
+无需 ctypes，也无需处理 `FILE_SHARE_WRITE` 共享标志。
+文件不存在时返回 `FileIdentity(exists=False, ...)` 而不是抛异常。
 
 `snapshot()` 的新流程：
 
@@ -397,15 +407,28 @@ def file_identity(path: Path) -> FileIdentity: ...
 
 ### 5.3 SHM 锁必须先在目标 Windows 上实证
 
-新增一个 `win` marker 的测试，在本机真实 `-shm` 文件上验证：
+**R23 —— 自动化测试用合成文件，不锁真实 QQ 的 `-shm`。** 本节原文写的是
+「在本机真实 `-shm` 文件上验证」。控制器裁定改为合成文件，理由：
+锁的**机械语义**（偏移、长度、非阻塞、失败降级、不改内容）与被锁文件是不是
+QQ 的毫无关系，任何 ≥123 字节的文件都能验证；而在自动化测试里去锁一个
+正在运行的 QQ 所持有的文件，是拿真实客户端的稳定性换零额外信息。
+「偏移 120 是否真是 SQLite 的 WAL-index 锁区」属于对 SQLite 布局的考证，
+应通过阅读 SQLite 文档/源码确认，而不是通过在真机上试锁观察 QQ 是否被阻塞——
+后者本身就是我们想避免的侵入行为。
+
+新增 `win` marker 的测试，在一个**大小与真实 `-shm` 相同（32768 字节）**的
+合成文件上验证：
 
 - 偏移 120、长度 3 的 `msvcrt.locking(LK_NBLCK)` 能成功取得
-- 取得与释放**都不改变文件内容**（前后字节比较）
-- 锁被另一进程持有时，`LK_NBLCK` 立即失败而非阻塞
-- 文件不存在 / 长度不足 123 字节时优雅降级为 `locked=False`
+- 取得与释放**都不改变文件内容**（前后逐字节比较）
+- 锁被同一进程的另一句柄持有时，第二次 `LK_NBLCK` 立即失败而非阻塞
+- 文件不存在 / 长度不足 123 字节 / 以 `"r+b"` 打开失败时优雅降级为 `locked=False`
+- 上下文管理器在异常路径下也会解锁并关闭句柄（不泄漏）
 
-**若实测发现偏移或长度不对，停下来报告，不要猜。** 这是 SQLite 的
-WAL-index 锁区布局，错了会导致要么锁不住、要么锁错地方影响 QQ。
+并**额外要求**：在实现 `shm_lock` 前，先用 WebFetch 核对 SQLite 官方文档或
+`wal.c` 源码中 WAL-index 头之后的锁区布局（`WAL_SHM_NLOCK`、锁字节起始偏移），
+把核对结论与出处写进模块 docstring 与报告。**若核对结果与「偏移 120、长度 3」不符，
+停下来报告，不要猜也不要照抄**——锁错位置要么锁不住、要么干扰 QQ。
 
 ### 5.4 必须覆盖的异常路径
 
