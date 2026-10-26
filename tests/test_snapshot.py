@@ -898,3 +898,72 @@ def test_shm_lock_unlocks_and_closes_when_body_raises(tmp_path, monkeypatch):
     assert all(h.closed for h in mine), "异常路径下句柄泄漏"
     assert range_is_free(shm, sn.SHM_LOCK_OFFSET, sn.SHM_LOCK_LENGTH), \
         "异常路径下没有解锁"
+
+
+# ---------------------------- 控制器裁定 R24 / R25 ----------------------------
+
+def test_shm_identity_change_does_not_trigger_retry(tmp_path, monkeypatch):
+    """R24：-shm 被 QQ mmap 后持续变动，纳入 identity 比对会让每一轮都失败。
+
+    鉴别力：若 _identities() 重新纳入 src_shm，本测试的 attempts 会变成
+    DEFAULT_ATTEMPTS 并以 SnapshotError 结束，而不是 1。
+    """
+    src = make_source(tmp_path / "src", with_wal=False, with_shm=True)
+    shm = src.with_name(src.name + "-shm")
+    real = sn.copy_family
+    state = {"n": 0}
+
+    def churn_shm(src_db, dst_dir, **kw):
+        out = real(src_db, dst_dir, **kw)
+        state["n"] += 1
+        with open(shm, "r+b") as f:          # 模拟 QQ 改写 mmap 的 wal-index
+            f.write(b"\x01")
+        return out
+
+    monkeypatch.setattr(sn, "copy_family", churn_shm)
+    res = sn.snapshot(src, tmp_path / "work", use_shm_lock=False)
+
+    assert state["n"] >= 1
+    assert res.attempts == 1
+    assert res.consistency == "best_effort"
+
+
+def test_wal_identity_change_still_triggers_retry(tmp_path, monkeypatch):
+    """R24 的对照组：把 -shm 移出比对不得连带削弱 -wal 的比对。"""
+    src = make_source(tmp_path / "src")
+    wal = src.with_name(src.name + "-wal")
+    real = sn.copy_family
+    state = {"raced": 0}
+
+    def racy(src_db, dst_dir, **kw):
+        out = real(src_db, dst_dir, **kw)
+        if state["raced"] == 0:
+            state["raced"] += 1
+            with open(wal, "ab") as f:
+                f.write(b"\x00" * 8)
+        return out
+
+    monkeypatch.setattr(sn, "copy_family", racy)
+    res = sn.snapshot(src, tmp_path / "work", use_shm_lock=False)
+    assert res.attempts == 2
+
+
+def test_shm_lock_defaults_to_off(tmp_path):
+    """R25：默认不加锁。锁会在整个主库复制期间（本机 369 MB，数秒）挡住
+    QQ 自己的写事务与 checkpoint，而一致性证明实际来自 identity 比对 +
+    WAL 交叉校验，锁只是锦上添花。"""
+    import inspect
+    assert inspect.signature(sn.snapshot).parameters["use_shm_lock"].default is False
+
+    src = make_source(tmp_path / "src", with_wal=False)
+    res = sn.snapshot(src, tmp_path / "work")     # 不传 use_shm_lock
+    assert res.locked is False
+    assert res.consistency == "best_effort"
+
+
+def test_proven_still_reachable_when_lock_explicitly_requested(tmp_path, monkeypatch):
+    """R25 的对照组：把默认关掉不得让 "proven" 变成永远取不到的死值。"""
+    src = make_source(tmp_path / "src", with_wal=False, shm_size=32768)
+    monkeypatch.setattr(sn, "shm_lock", lambda p: contextlib.nullcontext(True))
+    res = sn.snapshot(src, tmp_path / "work", use_shm_lock=True)
+    assert res.locked is True and res.consistency == "proven"

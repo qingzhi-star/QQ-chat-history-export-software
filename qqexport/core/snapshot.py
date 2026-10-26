@@ -298,7 +298,7 @@ def _wal_ok(dst_db: Path, dst_wal: Path | None, dst_shm: Path | None) -> bool:
 def snapshot(src_db: Path, dst_dir: Path, *,
              validator: Callable[[Path], bool] | None = None,
              attempts: int = DEFAULT_ATTEMPTS,
-             use_shm_lock: bool = True) -> SnapshotResult:
+             use_shm_lock: bool = False) -> SnapshotResult:
     """成组复制 db/-wal/-shm 并尽力获取一致快照；失败重试，耗尽后抛 SnapshotError。
 
     每轮顺序（修正案 A §5.1）：记录源身份 → 锁外复制 -shm → 持锁复制 .db/-wal
@@ -307,6 +307,13 @@ def snapshot(src_db: Path, dst_dir: Path, *,
 
     锁与 consistency / locked 反映的都是**成功那一轮**的状态，不是「历史上
     有任意一轮拿到过锁」——否则会把没被锁保护的副本说成 proven。
+
+    `use_shm_lock` 默认 **False**（R25）。锁会在整个主库复制期间（本机 369 MB，
+    数秒）一直持有，而 QQ 自己的写事务与 checkpoint 也要抢偏移 120 的同一字节，
+    于是用户可能看到「数据库已被锁定」。一致性证明实际来自第 1/3/4 层的
+    identity 比对 + 重试 + 第 5 层的 WAL 交叉校验，锁只是锦上添花，
+    代价却是干扰正在运行的客户端。需要最强保证时显式传 True，
+    此时 consistency 才可能取到 "proven"。
     """
     src_db = Path(src_db)
     dst_dir = Path(dst_dir)
@@ -321,8 +328,10 @@ def snapshot(src_db: Path, dst_dir: Path, *,
             f"请确认数据目录选对了，再重新尝试尽力获取一致快照。")
 
     def _identities():
-        return (file_identity(src_db), file_identity(src_wal),
-                file_identity(src_shm))
+        # -shm 不参与比对（R24）：它是可重建的 wal-index 缓存，被 QQ mmap 后
+        # 持续变动，纳入比对会让每一轮都失败，而这对 db/wal 是否成对毫无意义。
+        # wal.py 的铁律本就是「-shm 出任何问题都不得导致 WAL 恢复失败」。
+        return (file_identity(src_db), file_identity(src_wal))
 
     for attempt in range(1, max(1, attempts) + 1):
         # 第 1 层：记录源三件套的身份（窗口覆盖本轮全部复制动作）。
