@@ -67,6 +67,34 @@ def _files(rev_range: str | None) -> list[str]:
     return [ln for ln in _git(*args).splitlines() if ln.strip()]
 
 
+def _untracked() -> list[str]:
+    """尚未 git add 的新文件。
+
+    默认扫描必须覆盖它们：本项目真实踩过一次——新建的文档里写了真实标识符，
+    因为还没 staged，`git diff --cached` 看不到，扫描器报了 OK。
+    """
+    out = _git("ls-files", "--others", "--exclude-standard")
+    return [ln for ln in out.splitlines() if ln.strip()]
+
+
+def _untracked_lines(paths: list[str]) -> list[str]:
+    lines: list[str] = []
+    for p in paths:
+        try:
+            with open(p, "rb") as f:
+                raw = f.read(4 * 1024 * 1024)
+        except OSError:
+            continue
+        if b"\x00" in raw[:8192]:
+            continue                     # 二进制文件不按行扫
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            text = raw.decode("utf-8", "replace")
+        lines.extend(text.splitlines())
+    return lines
+
+
 def _added_lines(diff: str) -> list[str]:
     return [ln[1:] for ln in diff.splitlines()
             if ln.startswith("+") and not ln.startswith("+++")]
@@ -166,6 +194,12 @@ def main(argv: list[str] | None = None) -> int:
     files = _files(args.rev_range)
     added = _added_lines(diff)
 
+    untracked: list[str] = []
+    if args.rev_range is None:
+        untracked = _untracked()
+        added = added + _untracked_lines(untracked)
+        files = files + untracked
+
     findings: list[str] = []
     findings += check_uins(added)
     findings += check_user_dirs(added)
@@ -174,7 +208,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.check_author:
         findings += check_author(args.rev_range)
 
-    scope = args.rev_range or "staged"
+    scope = args.rev_range or "staged + untracked"
     if findings:
         seen: list[str] = []
         for f in findings:
