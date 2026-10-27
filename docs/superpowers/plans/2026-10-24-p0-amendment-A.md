@@ -508,6 +508,34 @@ QQ 的毫无关系，任何 ≥123 字节的文件都能验证；而在自动化
 新增断言：`OpenProcess` 被调用的**次数与参数**全程不变，且不存在任何
 第二次以更高权限重开的尝试。
 
+### 6.5 Task 6 落地后的裁定（R27–R29）
+
+- **R27 失败语义按 §6.3 分层，而不是计划里的「一遇权限拒绝就抛」。**
+  计划的 `Win32ProcessReader.read()` 在错误码 5/1314 时抛 `ProcessAccessDenied`，
+  而 `scan_key` 不捕获，于是任一 QQ 辅助进程拒绝访问就会中止整个扫描；这与
+  §6.3「进程退出则跳过」的语义冲突。改为：区域级读失败 → `read()` 返回 `None`
+  并跳过；进程级打开失败 → 跳过该进程；仅当「全部进程无命中且至少一个权限被拒」
+  时才抛 `ProcessAccessDenied`。**代价：** 真正被系统级拒绝时错误要扫完才出现，
+  仍会抛，只是延迟。
+
+- **R28 `_last_error()` 不能无条件用 `ctypes.get_last_error()`。**
+  计划用 `getattr(dll, "use_last_error", True)` 判断，但本机 Python 3.14 实测
+  `ctypes.WinDLL` 实例**没有** `use_last_error` 属性（该参数只影响函数指针保存
+  错误码的策略），于是注入假 kernel32 时永远读到线程局部的真实错误码，
+  `test_reader_raises_access_denied_on_winerror_5/1314` 会失败。改为按构造绑定：
+  自己创建的 DLL 用 `ctypes.get_last_error`，注入的 kernel32 用其 `GetLastError`。
+  **代价：** 若将来注入真实 WinDLL，错误码来源略不如 `get_last_error` 权威
+  ——但注入只用于测试路径。
+
+- **R29 「32 必须在 16 之前」不可由测试区分，只因文档与性能保留。**
+  带 `(?<=\x00)` 与 `(?=\x00)` 的交替正则在 32 字节串上先试 16 会因 lookahead
+  失败而退到 32，结果与先 32 相同；变异「交换 `KEY_LENGTHS`」实测 46 项全过。
+  因此不再声称有测试覆盖这一顺序。真正的防护是 lookbehind + lookahead，
+  两者各有一组变异杀灭（见任务报告）。
+
+另：spec §6.2 第 5 步的**跨区域去重**在原计划里漏实现，已补 `seen` 集合，
+由 `test_scan_dedupes_candidate_across_regions` 钉住（删掉后该测试失败）。
+
 ---
 
 ## 7. Task 7 — `keystore.py`
