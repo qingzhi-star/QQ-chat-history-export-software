@@ -314,7 +314,9 @@ CloseHandle
 
 **权限失败区分：** `GetLastError() ∈ {5, 1314}` → 抛 `ProcessAccessDenied`（提示「以管理员身份重试」）；其它失败静默跳过该区域。
 
-**兜底：** `qqexport key set <口令>` 手动写入，工具完全不碰 QQ 进程。`qqexport key show` 只显示长度与 SHA-256 前 8 位指纹，**永不打印口令本体**。
+**兜底：** `qqexport key set` 手动写入（只支持交互式 `getpass` 或 `--from-stdin`；
+位置参数会进 shell history 与进程列表，已移除），工具完全不碰 QQ 进程。
+`qqexport key show` 只显示长度与 SHA-256 前 8 位指纹，**永不打印口令本体**。
 
 **接口：**
 
@@ -526,10 +528,11 @@ FileIdentity = (exists, size, mtime_ns, volume_serial + file_index)
   2. 剥掉主库前 1024 字节（流式分块，不在内存持有整库；wal/shm 原样保留在旁边）
   3. detect_params 自动探测密码学参数
   4. inspect_wal 生成恢复计划
-  5. 逐页解密主库 → 写临时明文文件；页 262144 特殊透传；HMAC 失败页计入 corrupt_pages 后跳过
+  5. 逐页解密主库 → 写临时明文文件；页 262144 特殊透传；HMAC 失败页计入
+     corrupt_pages 后**写零页占位**（跳过写入会让后续页偏移错位、整库不可读）
   6. apply_wal 两遍处理，回放到最后 commit，截断
-  7. stdlib sqlite3 打开做完整性自检：
-       PRAGMA integrity_check（容忍部分损坏）
+  7. stdlib sqlite3 以 `mode=ro` 打开做完整性自检：
+       PRAGMA quick_check（不校验全部索引，369 MB 库上才可接受）
        SELECT name FROM sqlite_master WHERE type='table'
   8. 原子替换到最终路径
 ```

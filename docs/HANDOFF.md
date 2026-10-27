@@ -2,9 +2,14 @@
 
 **最后更新：** 2026-10-27
 **当前分支：** `p0-decryption-pipeline`
-**进度：** P0 的 13 个 task 完成 6 个（Task 1、3、2、5、4、6），全套 **244 tests passed**。
-Task 6（keyscan）提交 `4661776`；隐私扫描新增全库巡检入口（`--audit`），
-文档里的真实用户名残留已清除（`356f802`、`267a0e5`）。
+**进度：** P0 的 13 个 task 完成 **10 个**（Task 1–10），全套 **374 tests passed**。
+Task 6–10 提交：`4661776`（keyscan）、`ca2c4c8`（keystore）、`98340ce`（decrypt）、
+`a0b0b20`（report+doctor）、`cf3f73e`（cli）。隐私扫描新增全库巡检入口
+（`--audit`），文档里的真实用户名残留已清除（`356f802`、`267a0e5`）。
+
+**主链路已打通**：discover → keyscan → keystore → snapshot → decrypt → doctor/cli
+全部落地并有变异验证。**尚未做**：真库页 1 fixture（Task 11）、真机 live 冒烟
+（Task 12，P0 验收的执行载体）、验收与发布检查（Task 13）。
 
 这份文档是给接手者的**唯一入口**。先读完它，再读它指向的三份规范文档。
 
@@ -27,10 +32,15 @@ stdlib `sqlite3` 打开、且**含最新消息**的明文数据库。消息解�
 | `qqexport/core/wal.py` | WAL 帧校验、commit 边界、按事务原子回放 | ✅ |
 | `qqexport/core/snapshot.py` | db/wal/shm 成组复制 + 四层一致性校验 | ✅ |
 | `qqexport/core/keyscan.py` | 只读内存扫描取口令；纯计算与 Win32 分离 | ✅ 21/21 变异杀灭 |
+| `qqexport/core/keystore.py` | DPAPI 口令缓存；损坏文件拒绝覆盖、坏条目隔离 | ✅ 13/13 变异杀灭 |
+| `qqexport/core/decrypt.py` | 快照→解密→WAL 回放，三态状态 + 原子输出 | ✅ 18/18 变异杀灭 |
+| `qqexport/report.py` | 报告数据结构、ASCII 退路、JSON schema_version | ✅ |
+| `qqexport/doctor.py` | 11 项全链路自检，独立容错、脱敏、临时目录 | ✅ 20/20 变异杀灭 |
+| `qqexport/cli.py` | version / doctor / key 子命令，cp936 与多账号保护 | ✅ 10/10 变异杀灭 |
 | `tools/check_privacy.py` | 提交前扫描 + `--audit` 全库巡检 | ✅ 已自检 |
 
-**还不能端到端跑通**：缺 `keystore`（存密钥）、`decrypt`（编排）、
-`doctor`/`cli`（用户入口）。
+**不能端到端跑通的地方**：只剩 Task 11–13 的验收环节（真实 fixture、live 冒烟、
+发布检查）。日常测试（374 项）不依赖真实 QQ，可在任何 Windows 机器跑。
 
 ---
 
@@ -309,9 +319,12 @@ git author email 的**本地部分就是用户的真实 QQ 号**（形如 `qz<�
 
 ---
 
-## 9. 剩余 7 个 task
+## 9. 剩余 3 个 task
 
-**执行顺序（修正案 §15）：** Task 7 → 8 → 9 → 10 → 11 → 12 → 13
+**执行顺序（修正案 §15）：** Task 11 → 12 → 13
+
+**已完成（Task 1–10）的实现细节与延后 minor 在 ledger**；下面 Task 7–10 的原始
+说明保留供回溯，但代码已落地、接口以源码为准。
 
 计划的每个 task 段落都含完整可粘贴代码，但**必须先读修正案对应小节**，
 因为修正案改了不少东西。抽取单个 task 的修正案切片：
@@ -579,6 +592,9 @@ cipher 指纹、WAL 典型帧数、解密耗时与产物大小、任何与 spec 
 | R27 | keyscan 失败语义分层：区域读失败跳过、进程失败跳过、全部被拒才抛 | 计划「一遇 5/1314 就抛」会因任一辅助进程拒权而中止整个扫描 |
 | R28 | `_last_error` 按构造绑定（自建 DLL 用 `ctypes.get_last_error`，注入的用其 `GetLastError`） | 3.14 的 WinDLL 没有 `use_last_error` 属性，计划写法让假 kernel32 测试必失败 |
 | R29 | `KEY_LENGTHS` 的 32→16 顺序不可由测试区分 | 带 NUL lookbehind/lookahead 时交换顺序结果相同，别再声称有覆盖 |
+| R30 | 合成随机页库的 `quick_check` 必然非 ok → Task 8/9 的「完整成功」测试打桩 `integrity_probe` | 三态落地后计划里「产物存在即成功」的断言不再成立；failed 分支另用真实 probe 测 |
+| R31 | CLI 的 `--data-dir` / `--uin` 挂在各子命令上 | argparse 中子命令后的选项只交给子 parser；挂主 parser 时计划自己的 `key set --uin` 测试都会失败 |
+| R32 | `--ascii` 只保证状态标记 ASCII，中文检查名保留 | 强行全 ASCII 会把中文名称与降级原因变成 `?`；cp936 本就能显示中文，测试钉住「内容为 ASCII 时严格可 encode」 |
 
 ---
 
