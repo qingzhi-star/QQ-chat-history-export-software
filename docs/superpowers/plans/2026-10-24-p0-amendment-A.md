@@ -649,6 +649,18 @@ Task 12 的 live 测试必须断言 `integrity_check == "ok"` **且**
 验收结论记为「部分恢复」并列出损坏页占比，**不计入「标准明文库」的完整通过**，
 但也不自动判定 P0 失败——由用户在 Task 13 据占比决定。
 
+### 8.6 Task 8 落地后的裁定 R30（三态与计划测试的冲突）
+
+计划的 Task 8 测试用 `fake.random_plain_pages` 造合成库，然后断言产物存在、
+字节内容正确。但随机页库的 `quick_check` **必然不 ok**，落实 §8.1 的三态后
+这些产物会被判 `failed` 并删除——计划里的断言因此不再成立。
+
+裁定：**合成测试一律把 `integrity_probe` 打桩成 `("ok", ...)`**，只验证页级
+产物、WAL 叠加、原子替换与状态机接线；`failed` 分支另用**真实 probe** 对随机页
+单独测（证明它会 fail、会删产物、旧产物不变）。成本：`complete` 状态下
+`quick_check` 的真实性只能由 Task 12 的 live 冒烟提供，合成测试不声称覆盖它。
+不可把打桩过的 `integrity_check == "ok"` 当作「产物可查询」的证据。
+
 ---
 
 ## 9. Task 9 — `report.py` + `doctor.py`
