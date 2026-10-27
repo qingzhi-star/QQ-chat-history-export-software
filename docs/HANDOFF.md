@@ -2,7 +2,9 @@
 
 **最后更新：** 2026-10-27
 **当前分支：** `p0-decryption-pipeline`
-**进度：** P0 的 13 个 task 完成 5 个（Task 1、3、2、5、4 按此顺序），全套 **198 tests passed**
+**进度：** P0 的 13 个 task 完成 6 个（Task 1、3、2、5、4、6），全套 **244 tests passed**。
+Task 6（keyscan）提交 `4661776`；隐私扫描新增全库巡检入口（`--audit`），
+文档里的真实用户名残留已清除（`356f802`、`267a0e5`）。
 
 这份文档是给接手者的**唯一入口**。先读完它，再读它指向的三份规范文档。
 
@@ -24,10 +26,11 @@ stdlib `sqlite3` 打开、且**含最新消息**的明文数据库。消息解�
 | `qqexport/core/discover.py` | 定位数据目录、枚举账号、`select_account` | ✅ |
 | `qqexport/core/wal.py` | WAL 帧校验、commit 边界、按事务原子回放 | ✅ |
 | `qqexport/core/snapshot.py` | db/wal/shm 成组复制 + 四层一致性校验 | ✅ |
-| `tools/check_privacy.py` | 提交前敏感信息扫描 | ✅ 已自检 |
+| `qqexport/core/keyscan.py` | 只读内存扫描取口令；纯计算与 Win32 分离 | ✅ 21/21 变异杀灭 |
+| `tools/check_privacy.py` | 提交前扫描 + `--audit` 全库巡检 | ✅ 已自检 |
 
-**还不能端到端跑通**：缺 `keyscan`（取密钥）、`keystore`（存密钥）、
-`decrypt`（编排）、`doctor`/`cli`（用户入口）。
+**还不能端到端跑通**：缺 `keystore`（存密钥）、`decrypt`（编排）、
+`doctor`/`cli`（用户入口）。
 
 ---
 
@@ -217,6 +220,9 @@ Windows 上句柄未关会让清理抛 `PermissionError`。
   数据文件后缀、密钥上下文中的 16/32 字节字面量。
   带 `--check-author` 可额外查提交者邮箱，`--range A..B` 可扫指定提交范围
 - 扫描器有误报就改扫描器的规则（收紧到只报高置信度形状），**不要绕过扫描器**
+- 除了默认的「staged + 未跟踪」扫描，另有只读全库巡检
+  `python tools/check_privacy.py --audit`：清历史遗留泄漏，与默认扫描共用规则。
+  它已经抓出过计划书里的真实用户名（转义双反斜杠写法曾绕过旧规则）。
 
 ### 6.3 推送
 
@@ -303,9 +309,9 @@ git author email 的**本地部分就是用户的真实 QQ 号**（形如 `qz<�
 
 ---
 
-## 9. 剩余 8 个 task
+## 9. 剩余 7 个 task
 
-**执行顺序（修正案 §15）：** Task 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13
+**执行顺序（修正案 §15）：** Task 7 → 8 → 9 → 10 → 11 → 12 → 13
 
 计划的每个 task 段落都含完整可粘贴代码，但**必须先读修正案对应小节**，
 因为修正案改了不少东西。抽取单个 task 的修正案切片：
@@ -320,7 +326,10 @@ bash "<superpowers skill 目录>/subagent-driven-development/scripts/task-brief"
      docs/superpowers/plans/2026-10-24-qq-export-p0-decryption-pipeline.md <N>
 ```
 
-### Task 6 — `keyscan.py` 被动内存扫描
+### Task 6 — `keyscan.py` 被动内存扫描（✅ 已完成，commit `4661776`）
+
+落地时新增三条裁定 R27–R29（修正案 §6.5）：失败语义分层、`_last_error`
+按构造绑定、`KEY_LENGTHS` 顺序不可观测。以下为原始任务说明，保留供回溯。
 
 **做什么：** 只读扫描 `QQ.exe` 进程内存，找 16/32 字节可打印 ASCII 的 C 字符串候选，
 逐个拿真库 page-1 HMAC 验证。
@@ -567,6 +576,9 @@ cipher 指纹、WAL 典型帧数、解密耗时与产物大小、任何与 spec 
 | R24 | `-shm` 移出 identity 比对 | 它被 mmap 后持续变动，纳入会让每轮恒失败且对正确性无意义 |
 | R25 | `use_shm_lock` 默认 `False` | 锁持有到 369 MB 复制完毕会让 QQ 报「数据库已被锁定」 |
 | R26 | **P0 验收阻塞项**：Task 12 必须实测 `attempts` 分布 | `-wal` 在 QQ 活跃写入时可能让 identity 比对恒失败，合成测试测不出 |
+| R27 | keyscan 失败语义分层：区域读失败跳过、进程失败跳过、全部被拒才抛 | 计划「一遇 5/1314 就抛」会因任一辅助进程拒权而中止整个扫描 |
+| R28 | `_last_error` 按构造绑定（自建 DLL 用 `ctypes.get_last_error`，注入的用其 `GetLastError`） | 3.14 的 WinDLL 没有 `use_last_error` 属性，计划写法让假 kernel32 测试必失败 |
+| R29 | `KEY_LENGTHS` 的 32→16 顺序不可由测试区分 | 带 NUL lookbehind/lookahead 时交换顺序结果相同，别再声称有覆盖 |
 
 ---
 
