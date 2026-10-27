@@ -5,9 +5,13 @@
 规则刻意收紧：只报**高置信度**的泄漏形状，避免误报导致扫描被绕过。
 
 用法：
-    python tools/check_privacy.py                 # 扫描已 staged 的改动
+    python tools/check_privacy.py                 # 扫描 staged + 未跟踪文件
+    python tools/check_privacy.py --audit         # 只读巡检全部受版本控制的文件
     python tools/check_privacy.py --check-author  # 额外检查作者/提交者邮箱
     python tools/check_privacy.py --range origin/main..HEAD
+
+两种检查同时保留（修正案 A §0.5）：默认扫描拦住**新**泄漏，`--audit` 清理
+**历史遗留**。后者只读，不修改任何文件，输出只含文件、行号与类别。
 """
 from __future__ import annotations
 
@@ -41,18 +45,41 @@ DATA_FILE_SUFFIXES = (".db", ".db-wal", ".db-shm", ".sqlite", ".amr", ".silk")
 _QUOTED_UIN_RE = re.compile(r"""["'](\d{5,12})["']""")
 # uin = 12345 / --uin 12345 形式
 _UIN_ASSIGN_RE = re.compile(r"(?:uin|qq)\s*[=:]\s*['\"]?(\d{5,12})\b", re.IGNORECASE)
-# Users\<name>\ 或 /home/<name>/
-_USER_DIR_RE = re.compile(r"(?:Users|home)[\\/]([A-Za-z0-9_.<>-]+)[\\/]",
+# Users\<name>\ 或 /home/<name>/。允许连续 1–2 个分隔符：Markdown 与 Python
+# 源码里的转义写法 `D:\\Users\\<name>\\Documents` 曾绕过旧规则（真实用户名由此漏检）。
+_USER_DIR_RE = re.compile(r"(?:Users|home)[\\/]{1,2}([A-Za-z0-9_.<>-]+)[\\/]{1,2}",
                           re.IGNORECASE)
 # 引号内 16 或 32 字节可打印 ASCII
 _KEY_LITERAL_RE = re.compile(r"""[bB]?["']([\x21-\x7e]{16}|[\x21-\x7e]{32})["']""")
 _KEY_HINT_RE = re.compile(
     r"(?i)passphrase|password|secret|api[_-]?key|\btoken\b|口令|密钥")
 
+# spec §7.1 的 QQ 字段号 / 列名（protobuf 字段号与 SQLite 列名），不是账号标识。
+# 它们与 5–12 位 uin 形状相同，所以在「非身份上下文」里豁免；
+# 一旦该行出现 uin / QQ 号 / 账号 / 数据目录等身份语汇，照常报告。
+QQ_FIELD_IDS = frozenset({
+    "40001", "40011", "40012", "40013", "40020", "40021", "40030", "40033",
+    "40050", "40600", "40605", "40800", "40801", "40900", "49154", "49155",
+    "45002", "45003", "45101", "45402", "45405", "45406", "45411", "45412",
+    "45419", "45503", "45550", "45802", "45803", "45804", "45812", "45906",
+    "45907", "47402", "47404", "47413", "47703", "47710", "47901", "47902",
+    "47904", "48151", "48152", "48601", "48602", "48603",
+})
+_IDENTITY_CONTEXT_RE = re.compile(
+    r"(?i)\buin\b|qq\s*号|账号|客户号|tencent files|--uin|用户目录")
+
 
 def _git(*args: str) -> str:
     return subprocess.run(["git", *args], capture_output=True, text=True,
                           encoding="utf-8", errors="replace", check=True).stdout
+
+
+def _git_z(*args: str) -> list[str]:
+    """NUL 分隔的 git 输出。避免 core.quotepath 把中文文件名转义成八进制串
+    —— 那样 `open()` 会失败，未跟踪的新文档就会被静默漏扫。"""
+    out = subprocess.run(["git", *args], capture_output=True,
+                         encoding="utf-8", errors="replace", check=True).stdout
+    return [p for p in out.split("\0") if p]
 
 
 def _diff(rev_range: str | None) -> str:
@@ -73,25 +100,39 @@ def _untracked() -> list[str]:
     默认扫描必须覆盖它们：本项目真实踩过一次——新建的文档里写了真实标识符，
     因为还没 staged，`git diff --cached` 看不到，扫描器报了 OK。
     """
-    out = _git("ls-files", "--others", "--exclude-standard")
-    return [ln for ln in out.splitlines() if ln.strip()]
+    return _git_z("-c", "core.quotepath=false", "ls-files", "--others",
+                  "--exclude-standard", "-z")
+
+
+class _UnreadableFile(RuntimeError):
+    """列表里的文件读不出来。扫描器必须 fail-closed，不能静默跳过。"""
+
+
+def _text_lines(path: str) -> list[str] | None:
+    """读取一个文件的文本行；二进制文件返回 None（不按行扫）。
+
+    读失败抛 `_UnreadableFile`：静默跳过等于给泄漏留后门。
+    """
+    try:
+        with open(path, "rb") as f:
+            raw = f.read(4 * 1024 * 1024)
+    except OSError as e:
+        raise _UnreadableFile(f"{path}: {type(e).__name__}") from e
+    if b"\x00" in raw[:8192]:
+        return None
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        text = raw.decode("utf-8", "replace")
+    return text.splitlines()
 
 
 def _untracked_lines(paths: list[str]) -> list[str]:
     lines: list[str] = []
     for p in paths:
-        try:
-            with open(p, "rb") as f:
-                raw = f.read(4 * 1024 * 1024)
-        except OSError:
-            continue
-        if b"\x00" in raw[:8192]:
-            continue                     # 二进制文件不按行扫
-        try:
-            text = raw.decode("utf-8")
-        except UnicodeDecodeError:
-            text = raw.decode("utf-8", "replace")
-        lines.extend(text.splitlines())
+        got = _text_lines(p)
+        if got is not None:
+            lines.extend(got)
     return lines
 
 
@@ -107,10 +148,13 @@ def _is_regex_source(line: str) -> bool:
 def check_uins(added: list[str]) -> list[str]:
     hits = []
     for line in added:
+        identity_context = bool(_IDENTITY_CONTEXT_RE.search(line))
         for rx in (_QUOTED_UIN_RE, _UIN_ASSIGN_RE):
             for m in rx.finditer(line):
                 val = m.group(1)
                 if val in ALLOWED_SYNTHETIC_UINS:
+                    continue
+                if val in QQ_FIELD_IDS and not identity_context:
                     continue
                 hits.append(f"疑似真实 uin {val} -> {line.strip()[:110]}")
     return hits
@@ -178,6 +222,33 @@ def check_author(rev_range: str | None) -> list[str]:
     return hits
 
 
+def audit_tracked() -> tuple[list[str], int, int]:
+    """只读巡检全部受版本控制的文件，返回 (命中, 文件数, 行数)。
+
+    与默认的提交前扫描互补：默认只看到**改动**，历史遗留的泄漏只有全库
+    巡检才能发现（spec §10.1、修正案 A §0.5）。规则与默认扫描完全一致，
+    避免两套判定标准互相漂移。
+    """
+    findings: list[str] = []
+    files = _git_z("-c", "core.quotepath=false", "ls-files", "-z")
+    n_files = n_lines = 0
+    for path in files:
+        try:
+            lines = _text_lines(path)
+        except _UnreadableFile as e:
+            findings.append(f"无法读取受控文件（无法确认无泄漏）: {e}")
+            continue
+        if lines is None:
+            continue
+        n_files += 1
+        for lineno, line in enumerate(lines, 1):
+            n_lines += 1
+            for hit in (check_uins([line]) + check_user_dirs([line])
+                        + check_key_literals([line])):
+                findings.append(f"{path}:{lineno}: {hit}")
+    return findings, n_files, n_lines
+
+
 def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):
         try:
@@ -188,7 +259,23 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="提交前敏感信息扫描")
     p.add_argument("--range", dest="rev_range", default=None)
     p.add_argument("--check-author", action="store_true")
+    p.add_argument("--audit", action="store_true",
+                   help="只读巡检全部受版本控制的文件（清理历史遗留泄漏）")
     args = p.parse_args(argv)
+
+    if args.audit:
+        findings, n_files, n_lines = audit_tracked()
+        scope = f"all tracked files（{n_files} 个文件，{n_lines} 行）"
+        if findings:
+            print(f"[FAIL] 全库隐私巡检未通过（{scope}，{len(findings)} 项）：",
+                  file=sys.stderr)
+            for f in findings:
+                print(f"  - {f}", file=sys.stderr)
+            print("\n处理：改为合成值或占位符；"
+                  "历史提交若已推送，按 HANDOFF §7 的规则处理。", file=sys.stderr)
+            return 1
+        print(f"[OK] 全库隐私巡检通过（{scope}）")
+        return 0
 
     diff = _diff(args.rev_range)
     files = _files(args.rev_range)
@@ -197,7 +284,12 @@ def main(argv: list[str] | None = None) -> int:
     untracked: list[str] = []
     if args.rev_range is None:
         untracked = _untracked()
-        added = added + _untracked_lines(untracked)
+        try:
+            added = added + _untracked_lines(untracked)
+        except _UnreadableFile as e:
+            print(f"[FAIL] 无法读取未跟踪文件（无法确认无泄漏）: {e}",
+                  file=sys.stderr)
+            return 1
         files = files + untracked
 
     findings: list[str] = []
