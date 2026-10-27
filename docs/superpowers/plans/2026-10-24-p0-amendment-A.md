@@ -776,6 +776,24 @@ Task 10 的出口条件增加：在**干净 shell** 中执行 `qqexport version`
 ### 10.6 顺手改 pyproject
 
 按 §1 增加 `tmp_path_retention_policy = "none"`。
+（Task 3 已加，本次核实存在，不重复添加。）
+
+### 10.7 Task 10 落地后的裁定（R31–R32）
+
+- **R31 `--data-dir` / `--uin` 挂在各子命令上，而不是主 parser。**
+  计划的写法（主 parser 定义、子命令使用）在 argparse 下不成立：子命令之后出现的
+  选项只会交给子 parser，`qqexport key set --uin ...` 会直接报 unrecognized
+  arguments——计划的 CLI 测试自己就会失败。改为 `_add_account_args()` 给
+  doctor 与 key 的 scan/set/clear 各自添加。代价：`qqexport --data-dir X version`
+  不再合法（本来也无意义）。
+
+- **R32 `--ascii` 只保证状态标记为 ASCII，检查名与详情保留中文。**
+  §10.3 要求 `--ascii` 严格可 `encode("ascii")`；但真实 doctor 的 11 项检查名
+  与详情都是中文，强行转 ASCII 会把名称、路径占位符与降级原因全变成 `?`，
+  反而破坏 cp936 控制台最需要的中文可读性（cp936 能显示中文，只是不能显示
+  emoji）。现在 emoji 状态标记已被替换为 `[OK]/[WARN]/[FAIL]/[SKIP]`，测试
+  钉住「内容本身为 ASCII 时输出严格可 encode」。代价：若下游脚本硬性要求全
+  ASCII，需要用稳定的检查 index 而不是名称。
 
 ---
 
