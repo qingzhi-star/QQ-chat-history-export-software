@@ -1031,7 +1031,7 @@ POST /api/key/scan                # 触发内存扫描
 | `test_media.py` | md5 索引；Ori 优先于 Thumb；四级解析回退；缺失时 `missing=True`；只读不改源 | 否 |
 | `test_txt.py` | `名称：内容` 格式；日期分隔；占位符；UTF-8 BOM；GBK 回退与替换计数 | 否 |
 | `test_html.py` | golden file；自己/他人对齐；零外部资源（断言 HTML 中无 `http://` / `https://` / `//cdn`）；分片阈值触发；未解析消息警示块 | 否 |
-| `test_discover.py` | 已知文件夹重定向场景（模拟 `D:\Users\...\Documents`）；uin 枚举过滤；找不到时抛 `DiscoveryError` | 否 |
+| `test_discover.py` | 已知文件夹重定向场景（`SHGetKnownFolderPath` 返回非默认盘下的 `<Documents>`）；uin 枚举过滤；找不到时抛 `DiscoveryError` | 否 |
 | `test_snapshot.py` | 成组复制；锁不可用时仍能复制并靠校验兜底；校验失败重试 3 次；**断言从未写入源目录** | 否 |
 | `test_keyscan.py` | 候选生成（16/32 长度、0x00 边界）；验证回调；超时不挂死；错误码 5/1314 抛 `ProcessAccessDenied` | 否（注入假 handle） |
 | `test_e2e.py` | 合成明文库 → 三种格式全跑通 → 断言产物存在且非空、报告计数自洽 | 否 |

@@ -583,8 +583,9 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'qqexport.core'`
 ```python
 """定位 QQ NT 安装位置、数据目录与账号。
 
-本机「文档」已知文件夹可能被重定向到其他盘（spec §3 实测为 D:\\Users\\123\\Documents），
-所以主路径必须走 SHGetKnownFolderPath，%USERPROFILE%\\Documents 只能作最后回退。
+本机「文档」已知文件夹可能被重定向到其他盘（spec §3：实测重定向，具体盘符与
+用户名不入库），所以主路径必须走 SHGetKnownFolderPath，%USERPROFILE%\\Documents
+只能作最后回退。
 """
 from __future__ import annotations
 
