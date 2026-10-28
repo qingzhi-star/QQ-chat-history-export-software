@@ -264,3 +264,22 @@ def test_exception_messages_are_printable_ascii_without_sensitive_content():
     for msg in messages:
         assert msg.isascii() and msg.isprintable()
         assert "\\" not in msg and "/" not in msg and ":" not in msg
+
+def test_detect_params_derives_each_kdf_once_per_call(monkeypatch):
+    """错误候选会走完所有组合；派生密钥按 kdf 缓存，PBKDF2 只跑两次。
+
+    删掉缓存后 sha512 会被派生 6 次；keyscan 每个候选都调用本函数，
+    这个常数在 ~2 万候选上直接决定扫描能否在超时内完成。
+    """
+    pages = fake.random_plain_pages(1)
+    blob = fake.build_encrypted_db(pages, PASSPHRASE)
+    calls = []
+    real = sc.derive_keys
+
+    def counting(passphrase, salt, kdf):
+        calls.append(kdf)
+        return real(passphrase, salt, kdf)
+
+    monkeypatch.setattr(sc, "derive_keys", counting)
+    assert sc.detect_params(b"#8WrongKeyXXXXXX", blob) is None
+    assert sorted(calls) == ["sha1", "sha512"], calls

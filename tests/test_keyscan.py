@@ -481,6 +481,42 @@ def test_scan_key_stops_between_processes_after_deadline(monkeypatch):
     assert opened == [11]
 
 
+def test_scan_stops_before_verify_when_deadline_passes():
+    """超时必须在候选验证循环内生效：一次 verify 也可能很贵（PBKDF2）。
+
+    删掉循环内的 deadline 检查后，calls 会变成 [K16]。
+    """
+    ticks = iter([0.0, 0.0, 500.0])
+    blob = wrap(K16)
+    reader = FakeReader([(0x1000, len(blob))], {0x1000: blob})
+    calls = []
+    got = ks.scan_with_reader(reader, lambda c: calls.append(c) or False,
+                              timeout_s=120.0, clock=lambda: next(ticks))
+    assert got is None
+    assert calls == []
+
+
+def test_scan_key_dedupes_candidates_across_processes(monkeypatch):
+    """同一候选在多个 QQ 进程里都出现时，全局只验证一次。
+
+    删掉 scan_key 里跨进程共享的 seen 后，calls 会变成 [K16, K16]，
+    而本机 8 个进程合计把 ~2.3 万个候选放大成 ~10 万次 PBKDF2，导致超时。
+    """
+    calls = []
+    blob = wrap(K16)
+    monkeypatch.setattr(ks, "find_qq_pids", lambda: [11, 22])
+    monkeypatch.setattr(
+        ks, "Win32ProcessReader",
+        lambda pid: FakeReader([(0x1000, len(blob))], {0x1000: blob}))
+
+    def verify(cand):
+        calls.append(cand)
+        return False
+
+    assert ks.scan_key(verify) is None
+    assert calls == [K16]
+
+
 def test_scan_key_closes_reader_for_each_process(monkeypatch):
     """每个进程的句柄都要关：未命中时也不能积累句柄。"""
     blob = wrap(K16)

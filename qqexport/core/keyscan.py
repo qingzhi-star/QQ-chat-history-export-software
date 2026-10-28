@@ -90,15 +90,19 @@ class MemoryReader(Protocol):
 
 def scan_with_reader(reader: MemoryReader, verify: Callable[[bytes], bool], *,
                      timeout_s: float | None = DEFAULT_TIMEOUT_S,
-                     clock: Callable[[], float] = time.monotonic) -> bytes | None:
+                     clock: Callable[[], float] = time.monotonic,
+                     seen: set[bytes] | None = None) -> bytes | None:
     """遍历 reader 的区域，返回首个通过 verify 的候选。
 
-    超时覆盖整个扫描过程（每次进入新区域前检查），不是单次 API 调用。
-    跨区域去重：同一候选只交给 verify 一次（spec §6.2 第 5 步）。
+    超时覆盖整个扫描过程：进入新区域前与**每次验证候选前**都检查。
+    跨区域去重由调用方传入的 `seen` 保证；scan_key 用它跨进程共享，
+    避免同一候选在每个 QQ 进程里被重复验证（每次验证都要跑 PBKDF2，
+    本机 8 个进程合计 ~5 GB 内存时这是决定性的性能差异）。
     无论命中、超时还是异常，reader 都会被关闭。
     """
     deadline = None if timeout_s is None else clock() + timeout_s
-    seen: set[bytes] = set()
+    if seen is None:
+        seen = set()
     try:
         for base, size in reader.regions():
             if deadline is not None and clock() > deadline:
@@ -112,6 +116,8 @@ def scan_with_reader(reader: MemoryReader, verify: Callable[[bytes], bool], *,
                 if cand in seen:
                     continue
                 seen.add(cand)
+                if deadline is not None and clock() > deadline:
+                    return None
                 if verify(cand):
                     return cand
     finally:
@@ -292,6 +298,7 @@ def scan_key(verify: Callable[[bytes], bool], *,
     """
     deadline = None if timeout_s is None else time.monotonic() + timeout_s
     denied = False
+    seen: set[bytes] = set()          # 跨进程共享：每个候选全局只验证一次
     for pid in find_qq_pids():
         if deadline is None:
             remain = None
@@ -301,7 +308,7 @@ def scan_key(verify: Callable[[bytes], bool], *,
                 return None
         try:
             reader = Win32ProcessReader(pid)
-            got = scan_with_reader(reader, verify, timeout_s=remain)
+            got = scan_with_reader(reader, verify, timeout_s=remain, seen=seen)
         except ProcessAccessDenied:
             denied = True
             continue

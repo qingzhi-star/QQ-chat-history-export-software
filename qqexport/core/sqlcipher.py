@@ -181,6 +181,10 @@ def detect_params(passphrase: bytes, header_and_page1: bytes) -> CipherParams | 
 
     header_and_page1 = 原始库文件的前 1024+4096 字节（含 QQ 自定义头）。
     也接受裸的 4096 字节页 1（便于测试）。全不通过返回 None。
+
+    派生密钥只依赖 (passphrase, salt, kdf)，因此在一次调用内按 kdf 缓存：
+    对错误候选，PBKDF2 从最多 8 次降到 2 次。keyscan 每次拿到候选都会调用
+    本函数，这个常数在 ~2 万个候选上是决定性的（本机实测扫描从超时变为可完成）。
     """
     if len(header_and_page1) == PAGE_SZ:
         page1 = header_and_page1
@@ -193,10 +197,13 @@ def detect_params(passphrase: bytes, header_and_page1: bytes) -> CipherParams | 
     if salt == b"\x00" * SALT_SZ:
         return None
 
+    keys_by_kdf: dict[str, tuple[bytes, bytes]] = {}
     for kdf, mac, reserve in VERIFY_COMBOS:
         if not combo_is_possible(kdf, mac, reserve):
             continue
-        aes_key, mac_key = derive_keys(passphrase, salt, kdf)
+        if kdf not in keys_by_kdf:
+            keys_by_kdf[kdf] = derive_keys(passphrase, salt, kdf)
+        aes_key, mac_key = keys_by_kdf[kdf]
         params = CipherParams(kdf, mac, reserve, aes_key, mac_key)
         plain = decrypt_page(params, page1, 1)
         if plain is not None and plain.startswith(SQLITE_MAGIC):
