@@ -7,8 +7,10 @@
 import getpass
 import io
 import json
+import os
 import sys
 import warnings
+from pathlib import Path
 
 import pytest
 
@@ -57,6 +59,21 @@ def test_unknown_command_exits_two(capsys):
     with pytest.raises(SystemExit) as ei:
         cli.main(["bogus"])
     assert ei.value.code == 2
+
+
+def test_python_dash_m_entrypoint_works(tmp_path):
+    """`python -m qqexport version` 必须可用：Scripts 目录不一定在 PATH 里。"""
+    import subprocess
+
+    root = Path(__file__).resolve().parent.parent
+    env = dict(os.environ)
+    env["QQEXPORT_HOME"] = str(tmp_path / "apphome")
+    env["PYTHONIOENCODING"] = "utf-8"
+    proc = subprocess.run([sys.executable, "-m", "qqexport", "version"],
+                          cwd=root, env=env, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
+    assert proc.returncode == 0
+    assert "qqexport" in proc.stdout
 
 
 def test_parser_has_all_p0_subcommands():
