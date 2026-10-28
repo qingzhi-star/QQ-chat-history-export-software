@@ -57,9 +57,8 @@ def build_source(tmp_path: Path, pages: list[bytes], *, name: str = "nt_msg.db",
 
 
 def page1_of(pages: list[bytes]) -> bytes:
-    p = bytearray(pages[0])
-    p[20] = 48                    # decrypt 会显式写入 reserve
-    return bytes(p)
+    # 解密保留页 1 第 20 字节（SQLite reserved bytes）的原值；合成页本来就是 48。
+    return bytes(pages[0])
 
 
 def account_for(src_db: Path, uin: str = "123456789") -> QQAccount:
@@ -154,17 +153,23 @@ def test_decrypt_pages_output_has_no_wrapper_header(tmp_path):
     assert dst.read_bytes()[:16] == sc.SQLITE_MAGIC
 
 
-def test_decrypt_pages_page1_byte20_is_set_to_reserve(tmp_path):
+def test_decrypt_pages_preserves_page1_reserved_bytes(tmp_path):
+    """页 1 第 20 字节必须保留解密出的原值，不得改写成密文尾 reserve（R34）。
+
+    真机实测 QQ 9.9.36 的 SQLite reserved bytes 是 80，而显式 reserve 是 48；
+    改写成 48 会让 quick_check 对整个库报 Fragmentation。这里用 80 钉住保留语义。
+    """
     pages = fake.random_plain_pages(1)
     assert pages[0][20] == 48
     weird = bytearray(pages[0])
-    weird[20] = 0                                        # 故意写错
+    weird[20] = 80
     src = tmp_path / "src.db"
     src.write_bytes(fake.build_encrypted_db([bytes(weird)], PASSPHRASE))
     dst = tmp_path / "out.db"
     params = sc.detect_params(PASSPHRASE, sc.read_header_and_page1(src))
     dec.decrypt_pages(src, dst, params)
-    assert dst.read_bytes()[20] == params.reserve == 48
+    assert dst.read_bytes()[20] == 80
+    assert params.reserve == 48
 
 
 def test_decrypt_pages_counts_corrupt_and_keeps_offsets(tmp_path):

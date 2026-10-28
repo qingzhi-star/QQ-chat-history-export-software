@@ -374,6 +374,8 @@ class ProcessAccessDenied(RuntimeError): ...
 
 **reserve 区填零而非照抄密文。** 解密后页尾那 48 字节写 `b"\x00" * reserve`，不把密文的 IV+HMAC 残留带进明文库。SQLite 按页头第 20 字节的声明完全跳过保留区，填零与照抄对它等价；填零额外保证明文产物中不含任何密文片段。参照实现 chatlog-keeper 选择照抄，那是它的自由而非正确性要求。
 
+**页 1 第 20 字节（SQLite reserved bytes）必须保留解密出的原值，不得改写成密文尾 reserve（R34）。** 真机实测（QQ 9.9.36，2026-10-28）：密文 HMAC 在 reserve=48 下通过，但解密出的 page 1 第 20 字节是 **80**；保留 80 时 `PRAGMA quick_check == ok`、`c2c_msg_table`/`group_msg_table` 可查询，改成 48 则整库报 «Fragmentation of 32 bytes reported as 0»。两者不是同一个概念：reserve 是密文尾（IV16+SHA1 20+padding12），第 20 字节是 SQLite 的每页保留字节数（80 = 4016 可用 + 80 保留）。WAL 回放写页 1 时同样保留原值。
+
 **参数自动探测。** 不硬编码单一组合，按下表顺序试算 page-1 HMAC，首个通过者胜出，随后再确认解密结果以 `b"SQLite format 3\x00"` 开头：
 
 | 优先级 | KDF | 页 HMAC | reserve | 几何上是否可能 |

@@ -139,8 +139,10 @@ def decrypt_pages(src_db: Path, dst_db: Path, params: sc.CipherParams, *,
                 corrupt += 1
                 fout.write(zero_page)        # 写零页而不是跳过：保持页偏移
                 continue
-            if page_count == 1:
-                plain = sc.normalize_page1_header(plain, params.reserve)
+            # 页 1 第 20 字节（SQLite reserved bytes）必须保留解密出的原值。
+            # 真机实测 QQ 9.9.36 是 80，而密文尾 reserve 是 48——两者不是同一个
+            # 概念；改写成 48 会把 SQLite 的可用页尾从 4016 抬到 4048，整库
+            # quick_check 报 «Fragmentation of 32 bytes reported as 0»（R34）。
             fout.write(plain)
     return page_count, corrupt, shifted
 

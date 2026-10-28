@@ -661,6 +661,23 @@ Task 12 的 live 测试必须断言 `integrity_check == "ok"` **且**
 `quick_check` 的真实性只能由 Task 12 的 live 冒烟提供，合成测试不声称覆盖它。
 不可把打桩过的 `integrity_check == "ok"` 当作「产物可查询」的证据。
 
+### 8.7 Task 8/12 落地后的裁定 R34（页 1 reserved bytes ≠ 密文尾 reserve）
+
+计划假设 SQLCipher 的 reserve（48）就是 SQLite 页 1 第 20 字节，并让
+`decrypt_pages` 调 `normalize_page1_header` 强行写入 48。**真机推翻了这个假设**
+（QQ 9.9.36，2026-10-28，本机 369 MB 主库的同机测试账号）：
+
+- page 1 解密后第 20 字节是 **80**；密文 HMAC 只在 reserve=48 下通过；
+- 保留 80：`PRAGMA quick_check == ok`，`c2c_msg_table`/`group_msg_table`
+  可查询（本机实测 86 / 967 行）；
+- 改写成 48：整库报 «Fragmentation of 32 bytes reported as 0»（几乎所有页），
+  `status` 被判 failed、产物被删除——P0 验收直接失败。
+
+裁定：**保留解密出的页 1 第 20 字节原值**，删除 `normalize_page1_header`
+（含其 3 条测试），WAL 回放写页 1 时同样保留。spec §6.4 同步补上这条实测事实。
+成本：若将来某版本把该字节写成 0 而实际有保留区，需要新的实测证据再处理；
+当前以「保留写入方原值」为准（SQLite 语义上它来自写入方，不是解密器该改的）。
+
 ---
 
 ## 9. Task 9 — `report.py` + `doctor.py`

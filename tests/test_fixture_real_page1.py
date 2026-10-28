@@ -115,4 +115,6 @@ def test_real_page1_decrypts_to_sqlite_magic(blob, real_passphrase):
     plain = sc.decrypt_page(params, page1, 1)
     assert plain is not None
     assert plain.startswith(sc.SQLITE_MAGIC)
-    assert plain[20] == params.reserve
+    # SQLite reserved bytes 与密文尾 reserve 不是同一个概念：真机实测为 80
+    # 而 params.reserve 是 48（R34）。这个值只钉住格式，不参与解密。
+    assert plain[20] == 80

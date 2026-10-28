@@ -326,8 +326,9 @@ def apply_wal(params: sc.CipherParams, wal_path: Path, db_path: Path,
                     pending_n = 0
                     aborted = True
                     break
-                if pgno == 1:
-                    plain = sc.normalize_page1_header(plain, params.reserve)
+                # 页 1 第 20 字节（SQLite reserved bytes）保留 WAL 里的原值：
+                # 它不等于密文尾 reserve（真机实测 80 vs 48，R34），改写会
+                # 让整库 quick_check 报 Fragmentation。
                 pending[pgno] = plain
                 pending_n += 1
                 if dbsize != 0:

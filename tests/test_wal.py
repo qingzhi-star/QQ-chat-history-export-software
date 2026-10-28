@@ -398,6 +398,21 @@ def test_apply_handles_page_one_frame(tmp_path):
     assert out[20] == 48
 
 
+def test_apply_preserves_page_one_reserved_bytes(tmp_path):
+    """页 1 第 20 字节必须保留 WAL 明文的原值（真机实测 80，R34）。
+
+    实现若按密文尾 reserve（48）改写，这条失败；整库 quick_check 也会失败。
+    """
+    db = make_db(tmp_path, n_pages=4, filler=0xAA)
+    p1 = sc.SQLITE_MAGIC + b"\x00" * 4 + bytes([80]) + b"\x5a" * (sc.PAGE_SZ - 21)
+    blob = fake.build_wal([(1, p1, 4)], **KW)
+    w = write(tmp_path, "nt_msg.db-wal", blob)
+    plan = wal.inspect_wal(w)
+    params = sc.CipherParams("sha512", "sha1", 48, AES_KEY, MAC_KEY)
+    wal.apply_wal(params, w, db, plan)
+    assert db.read_bytes()[20] == 80
+
+
 # ---------- 修正案 A §4.1：commit 语义显式状态机 ----------
 
 def test_apply_multiple_commits_truncates_to_last_commit(tmp_path):

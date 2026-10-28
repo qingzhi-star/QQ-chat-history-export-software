@@ -208,26 +208,6 @@ def test_decrypt_page_rejects_wrong_length():
         sc.decrypt_page(params, b"\x00" * 100, 2)
 
 
-def test_normalize_page1_sets_reserved_byte():
-    plain = sc.SQLITE_MAGIC + b"\x00" * 4 + b"\xff" + b"\x00" * (sc.PAGE_SZ - 21)
-    assert plain[20] == 0xFF
-    out = sc.normalize_page1_header(plain, 48)
-    assert out[20] == 48
-    assert out[:20] == plain[:20] and out[21:] == plain[21:]
-    assert len(out) == sc.PAGE_SZ
-
-
-def test_normalize_page1_is_idempotent():
-    plain = sc.SQLITE_MAGIC + b"\x00" * (sc.PAGE_SZ - 16)
-    once = sc.normalize_page1_header(plain, 48)
-    assert sc.normalize_page1_header(once, 48) == once
-
-
-def test_normalize_page1_rejects_non_page1():
-    with pytest.raises(ValueError, match="SQLite page 1"):
-        sc.normalize_page1_header(b"\x00" * sc.PAGE_SZ, 48)
-
-
 def test_redacted_exposes_no_key_material():
     params = sc.CipherParams("sha512", "sha1", 48, b"A" * 32, b"B" * 32)
     text = repr(params.redacted())
@@ -251,19 +231,11 @@ def test_exception_messages_are_printable_ascii_without_sensitive_content():
     只允许可打印 ASCII，且不得出现路径分隔符（Windows/POSIX）与控制字符。
     """
     params = sc.CipherParams("sha512", "sha1", 48, b"\x00" * 32, b"\x00" * 32)
-    messages: list[str] = []
     with pytest.raises(ValueError) as e1:
         sc.decrypt_page(params, b"\x00" * 100, 2)
-    messages.append(str(e1.value))
-    with pytest.raises(ValueError) as e2:
-        sc.normalize_page1_header(b"\xff" * sc.PAGE_SZ, 48)
-    messages.append(str(e2.value))
-    with pytest.raises(ValueError) as e3:
-        sc.normalize_page1_header(b"\x00" * 100, 48)
-    messages.append(str(e3.value))
-    for msg in messages:
-        assert msg.isascii() and msg.isprintable()
-        assert "\\" not in msg and "/" not in msg and ":" not in msg
+    msg = str(e1.value)
+    assert msg.isascii() and msg.isprintable()
+    assert "\\" not in msg and "/" not in msg and ":" not in msg
 
 def test_detect_params_derives_each_kdf_once_per_call(monkeypatch):
     """错误候选会走完所有组合；派生密钥按 kdf 缓存，PBKDF2 只跑两次。

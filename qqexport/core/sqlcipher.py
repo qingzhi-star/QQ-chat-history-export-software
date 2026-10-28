@@ -161,21 +161,6 @@ def decrypt_page(params: CipherParams, page: bytes, page_no: int) -> bytes | Non
     return plain_body + zeros
 
 
-def normalize_page1_header(plain_page: bytes, reserve: int) -> bytes:
-    """把明文页 1 的第 20 字节（每页保留字节数）显式写成 reserve。
-
-    SQLCipher 会让 SQLite 只用每页前 4096-reserve 字节，并在头里记录该值。
-    我们解密后页尾 reserve 区是零填充的（见模块 docstring），SQLite 只按
-    头里的声明值跳过保留区；若该声明与实际 reserve 不符，stdlib sqlite3
-    会把那段字节当成有效内容而读出损坏数据。显式写入是幂等的防御措施。
-    """
-    if len(plain_page) != PAGE_SZ:
-        raise ValueError(f"page must be {PAGE_SZ} bytes, got {len(plain_page)}")
-    if plain_page[:SALT_SZ] != SQLITE_MAGIC:
-        raise ValueError("not a plaintext SQLite page 1")
-    return plain_page[:20] + bytes([reserve]) + plain_page[21:]
-
-
 def detect_params(passphrase: bytes, header_and_page1: bytes) -> CipherParams | None:
     """按 VERIFY_COMBOS 顺序试算 page-1 HMAC，首个通过者胜出。
 
