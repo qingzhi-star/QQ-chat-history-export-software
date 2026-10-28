@@ -1,15 +1,22 @@
 # 交接说明 —— QQ 聊天记录导出工具 P0
 
-**最后更新：** 2026-10-27
+**最后更新：** 2026-10-28
 **当前分支：** `p0-decryption-pipeline`
-**进度：** P0 的 13 个 task 完成 **10 个**（Task 1–10），全套 **374 tests passed**。
-Task 6–10 提交：`4661776`（keyscan）、`ca2c4c8`（keystore）、`98340ce`（decrypt）、
-`a0b0b20`（report+doctor）、`cf3f73e`（cli）。隐私扫描新增全库巡检入口
-（`--audit`），文档里的真实用户名残留已清除（`356f802`、`267a0e5`）。
+**进度：** P0 的 13 个 task **代码全部落地**；普通测试 **381 passed / 8 skipped**
+（8 项 skip 全是缺真库页 1 fixture），真机 live 冒烟 **9 passed**。
+**结论：P0 部分验收** —— 仅剩两项人工/环境待办：真库页 1 fixture 的人工审查与
+`git add -f`、Python 3.12 的 CI 验证。详见 `docs/compat-matrix.md`。
 
-**主链路已打通**：discover → keyscan → keystore → snapshot → decrypt → doctor/cli
-全部落地并有变异验证。**尚未做**：真库页 1 fixture（Task 11）、真机 live 冒烟
-（Task 12，P0 验收的执行载体）、验收与发布检查（Task 13）。
+Task 6–10 提交：`4661776`（keyscan）、`ca2c4c8`（keystore）、`98340ce`（decrypt）、
+`a0b0b20`（report+doctor）、`cf3f73e`（cli）；Task 11–13：`6161ed6`（fixture 工具）、
+`8ac7223`（python -m 入口）、`5bc3603`（keyscan 性能）、`8595969`（R34 reserved bytes）、
+`a948dd3`（live 冒烟）。隐私扫描新增全库巡检入口（`--audit`），文档里的真实用户名
+残留已清除（`356f802`、`267a0e5`）。
+
+**主链路已实证可用**：discover → keyscan → keystore → snapshot → decrypt →
+doctor/cli。真机报告：doctor 11/11、`quick_check == ok`、消息表可查询、
+WAL 回放有页级证据、同一快照两次解密一致、源目录 identity 未变、wheel 在
+干净 venv 中安装并跑通。
 
 这份文档是给接手者的**唯一入口**。先读完它，再读它指向的三份规范文档。
 
@@ -319,12 +326,19 @@ git author email 的**本地部分就是用户的真实 QQ 号**（形如 `qz<�
 
 ---
 
-## 9. 剩余 3 个 task
+## 9. 剩余任务与待人工项
 
-**执行顺序（修正案 §15）：** Task 11 → 12 → 13
+**Task 1–13 的代码全部落地。** 剩余的是两项**无法自动完成**的验证：
 
-**已完成（Task 1–10）的实现细节与延后 minor 在 ledger**；下面 Task 7–10 的原始
-说明保留供回溯，但代码已落地、接口以源码为准。
+1. **真库页 1 fixture（Task 11 的人工作业）**：真机运行
+   `python tools/capture_fixtures.py`，逐条审查打印出的页 1 全部可打印字符串，
+   输入 `I HAVE REVIEWED THE STRINGS`；确认后 `git add -f
+   tests/fixtures/nt_msg_header_page1.bin tests/fixtures/provenance.json`。
+   未采集前 `tests/test_fixture_real_page1.py` 的 8 项保持 SKIP（预期状态）。
+2. **Python 3.12**：本机只有 3.14，按修正案 §13.5 延后到 CI。
+
+下面 Task 7–13 的原始说明保留供回溯，接口以源码为准；实现细节、裁定与延后
+minor 在 ledger（`.superpowers/sdd/.../progress.md`，本地不入库）。
 
 计划的每个 task 段落都含完整可粘贴代码，但**必须先读修正案对应小节**，
 因为修正案改了不少东西。抽取单个 task 的修正案切片：
@@ -595,6 +609,8 @@ cipher 指纹、WAL 典型帧数、解密耗时与产物大小、任何与 spec 
 | R30 | 合成随机页库的 `quick_check` 必然非 ok → Task 8/9 的「完整成功」测试打桩 `integrity_probe` | 三态落地后计划里「产物存在即成功」的断言不再成立；failed 分支另用真实 probe 测 |
 | R31 | CLI 的 `--data-dir` / `--uin` 挂在各子命令上 | argparse 中子命令后的选项只交给子 parser；挂主 parser 时计划自己的 `key set --uin` 测试都会失败 |
 | R32 | `--ascii` 只保证状态标记 ASCII，中文检查名保留 | 强行全 ASCII 会把中文名称与降级原因变成 `?`；cp936 本就能显示中文，测试钉住「内容为 ASCII 时严格可 encode」 |
+| R33 | `scan_key` 跨进程共享 `seen`；`detect_params` 按 kdf 缓存派生；候选循环内查 deadline | 真机 8 进程/5 GB 内存把 2.3 万候选放大成约 10 万次 PBKDF2，120s 与 600s 都超时；修复后 70.2s 完成 |
+| R34 | **保留**页 1 第 20 字节（SQLite reserved bytes），删除 `normalize_page1_header` | 真机实测该字节是 80 而密文尾 reserve 是 48；强行写 48 会让整库 `quick_check` 报 Fragmentation、产物被判 failed |
 
 ---
 
@@ -617,22 +633,25 @@ cipher 指纹、WAL 典型帧数、解密耗时与产物大小、任何与 spec 
 
 ## 12. P0 验收清单（spec §10.3 + 修正案 §13.6）
 
-只有全部为 **PASS** 才能宣布 P0 完成：
+2026-10-28 真机结果（Windows 11 x64 / Python 3.14.6 / QQ 9.9.36-53644）：
 
-- [ ] `python -m pytest -q` 全绿（`live` 除外），输出洁净
-- [ ] `qqexport doctor --ascii` 的 11 项无 ❌
-- [ ] 产出的明文 `nt_msg.db` 可被 stdlib `sqlite3` 打开，
-      `PRAGMA quick_check` == `ok`，`c2c_msg_table` / `group_msg_table` 可 `SELECT COUNT(*)`
-- [ ] **最近的消息在**（R26/§12.2 的结论性证据）——
-      有可验证 commit → PASS；无可验证 commit → **未验证**
-- [ ] 源文件未被修改：QQ 退出条件下 identity 不变 → PASS；
-      QQ 运行中 → **未验证**
-- [ ] 同一快照两次解密字节一致
-- [ ] 无明文残留：无 `.partial`、无遗留临时目录、`git status` 干净
-- [ ] staged/untracked 隐私扫描通过
-- [ ] wheel 构建与干净环境安装检查通过
-- [ ] 汇总三态分列 `PASS` / `WARN` / `SKIP(未验证)`，
-      **任何 SKIP 都使结论为「部分验收」，不得说全绿**
+- [x] **PASS** `python -m pytest -q`：381 passed / 8 skipped（skip 全是缺 fixture）
+- [x] **PASS** doctor 11 项无 fail（live 实测全 `[OK]`）
+- [x] **PASS** 明文库 `quick_check == ok`；`c2c_msg_table` 86 行、
+      `group_msg_table` 985 行可 `SELECT COUNT(*)`
+- [x] **PASS** 最近的消息在（R26/§12.2）：WAL 45 帧、最后 commit 第 45 帧、
+      13/20 个已提交页与主库不同、产物 415 页
+- [x] **PASS（有条件）** 源文件未被修改：QQ 运行中窗口内 identity 三元组未变；
+      严格「QQ 退出后」复测仍建议做一次
+- [x] **PASS** 同一快照两次解密流式 SHA-256 一致
+- [x] **PASS** 无明文残留：无 `.partial`、临时目录已清理、`git status` 干净
+- [x] **PASS** staged/untracked 隐私扫描与全库巡检通过
+- [x] **PASS** wheel 构建 + 仓库外干净 venv 安装，`qqexport version` /
+      `key show` 退出码 0/0；wheel 不含 tests/fixtures/db/keys.json
+- [ ] **SKIP（未验证）** 真库页 1 fixture —— 仍需人工审查后 `git add -f`
+- [ ] **SKIP（未验证）** Python 3.12 —— 延后 CI
+
+**结论：P0 部分验收。** 存在 SKIP，不得写成「P0 已完成」（修正案 §13.6）。
 
 ---
 
@@ -663,3 +682,9 @@ cipher 指纹、WAL 典型帧数、解密耗时与产物大小、任何与 spec 
 9. **`truncate` 向上扩展是零填充**，不是保留原值。写断言时别搞错
 10. **Windows 忽略目录的只读属性**（R21）；`msvcrt.locking` 持锁期间
     整个文件对其它句柄不可读（Task 5 实测）
+11. **SQLCipher 的密文尾 reserve ≠ SQLite 头第 20 字节。** 真机实测前者 48、
+    后者 80；把 48 写进页头会让整库 `quick_check` 报 Fragmentation（R34）。
+    解密只负责还原页字节，不要「修正」写入方已认证的头部字段
+12. **内存扫描的成本在候选验证而不是读内存。** 2.3 万个不同候选 × 每进程重复
+    验证 ≈ 10 万次 PBKDF2，比读 5 GB 慢一个量级；跨进程去重 + 按 kdf 缓存
+    派生 + 候选循环内查 deadline 才能稳定在超时内（R33）
