@@ -1,0 +1,37 @@
+name: tests
+
+on:
+  push:
+    branches: [main, p0-decryption-pipeline]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: py${{ matrix.python-version }} / windows
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+
+      - name: Test
+        # live 被 pyproject 的 addopts 排除；fixture 中依赖真实口令的两项会
+        # 因 CI 没有 KeyStore 而 SKIP（预期），其余必须全过。
+        run: python -m pytest -q
+
+      - name: Privacy audit
+        # 只读巡检全部受控文件：不含账号、路径、口令、数据文件。
+        run: python tools/check_privacy.py --audit
