@@ -17,6 +17,10 @@
   provenance 只含日期/QQ 版本/页数/字节数/cipher 指纹；页 1 解密后 63/4096
   非零字节、无可打印敏感文本，8 项 fixture 测试 PASS。注意：主库 page 1 的
   schema 尚未 checkpoint（在 WAL 里），fixture 钉的是头/盐/HMAC 与魔数。
-- **Python 3.12**：本机只有 3.14，按修正案延后到 CI，尚未验证。
+- **CI 矩阵**（`.github/workflows/tests.yml`）：windows-latest 上
+  Python **3.12 / 3.13 / 3.14** 三腿，跑 `pytest`（live 排除）与只读隐私巡检；
+  run `40821758496`、`40821952392` 全绿。CI 不使用真实 QQ 数据/密钥，
+  两项口令 fixture 测试按预期 SKIP。
+- **Python 3.12**：本机只有 3.14，由 CI 矩阵验证（R35），不再算未验证。
 - 出现新版本不兼容时，诊断应说「未验证 / 暂不支持该格式」，不得误导为
   「口令错误」。

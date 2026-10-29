@@ -1009,6 +1009,22 @@ Python 3.12 最低版本的那一腿**延后到 CI**：本机只有 3.14，
 存在任何 SKIP / 部分恢复 / WAL 未验证时，README 必须写成
 「P0 部分验收（待人工验证项：…）」。
 
+### 13.7 Task 13 落地后的裁定 R35（保留 >=3.12，用 Windows CI 矩阵补验证）
+
+§13.5 原计划把 Python 3.12 那一腿「延后到 CI」，但仓库要**长期公开维护与分发**，
+`requires-python >=3.12` 必须从声明变成可验证事实；用户裁定**不提高最低版本**，
+改为补 CI：
+
+- GitHub Actions（`.github/workflows/tests.yml`）在 `windows-latest` 上跑
+  **3.12 / 3.13 / 3.14** 三腿；每腿执行 `pytest -q`（`live` 由 addopts 排除）
+  与只读 `tools/check_privacy.py --audit`；
+- 不读真实进程内存、不使用用户密钥、不上传任何产物；fixture 的两项口令测试
+  在 CI 无 `KeyStore` 时按预期 SKIP；
+- 证据：run `40821758496`（actions v4/v5）与 `40821952392`（v7）均 3/3 绿，
+  单腿约 30–40 秒；
+- 代价：公开仓库 Actions 分钟数（public 免费）与每次 push 的 CI 延迟；
+  将来 3.15 发布后若声明支持，需要扩矩阵重跑。
+
 ---
 
 ## 14. 需要同步修改 spec 的条目
