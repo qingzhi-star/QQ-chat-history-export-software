@@ -1,7 +1,7 @@
-# 交接说明 —— QQ 聊天记录导出工具 P0
+# 交接说明 —— QQ 聊天记录导出工具（P0 已完成，进入 P1）
 
 **最后更新：** 2026-10-29
-**当前分支：** `p0-decryption-pipeline`
+**当前分支：** `main`（`p0-decryption-pipeline` 已合并并删除）
 **进度：** P0 的 13 个 task **全部完成并验收**；普通测试 **389 passed / 0 skipped**，
 真机 live 冒烟 **9 passed**；CI（windows-latest）在 **3.12 / 3.13 / 3.14**
 三腿全绿（测试 + 全库隐私巡检）。
@@ -210,9 +210,10 @@ Windows 上句柄未关会让清理抛 `PermissionError`。
 
 ### 6.1 分支
 
-- 工作分支 **`p0-decryption-pipeline`**，从 `main` 的 `806fdff` 切出
-- **不要在 `main` 上直接提交**
-- `origin/main` 目前停在 `806fdff`（只有 README），P0 完成并通过验收后才合并
+- **直接向 `main` 提交**（2026-10-29 起）。`p0-decryption-pipeline` 已合并进
+  `main` 并删除，不要再开长期工作分支。
+- 需要试验大改时可开短分支，但合并进 `main` 后立即删除；发布用 tag（`v*`），
+  不靠长期分支。
 - **不要 force-push。** 仓库是 PUBLIC，且用户未授权重写已推送的历史
 
 ### 6.2 提交
