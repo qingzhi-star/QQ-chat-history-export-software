@@ -15,6 +15,10 @@ doctor 11/11、`quick_check == ok`、消息表可查询、WAL 回放有页级证
 `qqexport version` / `key show` 退出码 0。详见
 [docs/compat-matrix.md](docs/compat-matrix.md)。
 
+**发布状态：尚未发布。** 发布门槛是 P1（消息解析 + txt/html/pdf 导出）完成后
+的人工验收；在此之前不打 tag、不创建 Release。发布工作流已就绪
+（`.github/workflows/release.yml`），但只在功能完整后由人工打 `v*` tag 触发。
+
 **兼容性**：`requires-python >=3.12`；CI 在 `windows-latest` 上验证
 **3.12 / 3.13 / 3.14** 三条腿（测试 + 全库隐私巡检全绿）。真实 QQ 的 live
 冒烟与人工审查过的页 1 fixture 不进入 CI，只在本地跑。
