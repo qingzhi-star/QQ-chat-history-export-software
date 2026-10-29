@@ -13,8 +13,10 @@
   `group_msg_table` 991 行；`40800` blob 长度 c2c 中位 103 B / 最大 1522 B，
   group 中位 88 B / 最大 3400 B；解密 1.7 MB 耗时 0.14 s；WAL 61 帧。
   `discuss_msg_table` 等表存在但不在 P0 关键表清单内，留作 P1 输入。
-- **fixture 未采集**：`nt_msg_header_page1.bin` 需要人工审查页 1 字符串后
-  `git add -f`，当前 fixture 测试 SKIP，属「未验证」。
+- **fixture 已采集并审查**（2026-10-29）：`nt_msg_header_page1.bin` 5120 字节，
+  provenance 只含日期/QQ 版本/页数/字节数/cipher 指纹；页 1 解密后 63/4096
+  非零字节、无可打印敏感文本，8 项 fixture 测试 PASS。注意：主库 page 1 的
+  schema 尚未 checkpoint（在 WAL 里），fixture 钉的是头/盐/HMAC 与魔数。
 - **Python 3.12**：本机只有 3.14，按修正案延后到 CI，尚未验证。
 - 出现新版本不兼容时，诊断应说「未验证 / 暂不支持该格式」，不得误导为
   「口令错误」。

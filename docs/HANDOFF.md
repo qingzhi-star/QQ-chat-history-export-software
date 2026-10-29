@@ -1,11 +1,12 @@
 # 交接说明 —— QQ 聊天记录导出工具 P0
 
-**最后更新：** 2026-10-28
+**最后更新：** 2026-10-29
 **当前分支：** `p0-decryption-pipeline`
-**进度：** P0 的 13 个 task **代码全部落地**；普通测试 **381 passed / 8 skipped**
-（8 项 skip 全是缺真库页 1 fixture），真机 live 冒烟 **9 passed**。
-**结论：P0 部分验收** —— 仅剩两项人工/环境待办：真库页 1 fixture 的人工审查与
-`git add -f`、Python 3.12 的 CI 验证。详见 `docs/compat-matrix.md`。
+**进度：** P0 的 13 个 task **代码全部落地**；普通测试 **389 passed / 0 skipped**，
+真机 live 冒烟 **9 passed**。
+**结论：P0 部分验收** —— 只剩一项环境待办：Python 3.12 的 CI 验证。
+真库页 1 fixture 已于 2026-10-29 采集、审查并提交（`9eda067`）。
+详见 `docs/compat-matrix.md`。
 
 Task 6–10 提交：`4661776`（keyscan）、`ca2c4c8`（keystore）、`98340ce`（decrypt）、
 `a0b0b20`（report+doctor）、`cf3f73e`（cli）；Task 11–13：`6161ed6`（fixture 工具）、
@@ -328,14 +329,14 @@ git author email 的**本地部分就是用户的真实 QQ 号**（形如 `qz<�
 
 ## 9. 剩余任务与待人工项
 
-**Task 1–13 的代码全部落地。** 剩余的是两项**无法自动完成**的验证：
+**Task 1–13 的代码与真机验证全部落地。** 只剩一项**无法在本机完成**的验证：
 
-1. **真库页 1 fixture（Task 11 的人工作业）**：真机运行
-   `python tools/capture_fixtures.py`，逐条审查打印出的页 1 全部可打印字符串，
-   输入 `I HAVE REVIEWED THE STRINGS`；确认后 `git add -f
-   tests/fixtures/nt_msg_header_page1.bin tests/fixtures/provenance.json`。
-   未采集前 `tests/test_fixture_real_page1.py` 的 8 项保持 SKIP（预期状态）。
-2. **Python 3.12**：本机只有 3.14，按修正案 §13.5 延后到 CI。
+1. **Python 3.12**：本机只有 3.14，按修正案 §13.5 延后到 CI。
+
+真库页 1 fixture 已于 2026-10-29 采集并提交（`9eda067`）：5120 字节，
+provenance 最小化，8 项 fixture 测试 PASS。注意真机事实：主库 page 1 的 schema
+尚未 checkpoint（在 WAL 里），所以该 fixture 钉的是头/盐/HMAC 与解开后的魔数，
+不含表结构——不要据此断言「页 1 一定能看到 sqlite_master」。
 
 下面 Task 7–13 的原始说明保留供回溯，接口以源码为准；实现细节、裁定与延后
 minor 在 ledger（`.superpowers/sdd/.../progress.md`，本地不入库）。
@@ -633,9 +634,9 @@ cipher 指纹、WAL 典型帧数、解密耗时与产物大小、任何与 spec 
 
 ## 12. P0 验收清单（spec §10.3 + 修正案 §13.6）
 
-2026-10-28 真机结果（Windows 11 x64 / Python 3.14.6 / QQ 9.9.36-53644）：
+2026-10-28/29 真机结果（Windows 11 x64 / Python 3.14.6 / QQ 9.9.36-53644）：
 
-- [x] **PASS** `python -m pytest -q`：381 passed / 8 skipped（skip 全是缺 fixture）
+- [x] **PASS** `python -m pytest -q`：389 passed / 0 skipped（fixture 已采集）
 - [x] **PASS** doctor 11 项无 fail（live 实测全 `[OK]`）
 - [x] **PASS** 明文库 `quick_check == ok`；`c2c_msg_table` 86 行、
       `group_msg_table` 985 行可 `SELECT COUNT(*)`
@@ -648,10 +649,12 @@ cipher 指纹、WAL 典型帧数、解密耗时与产物大小、任何与 spec 
 - [x] **PASS** staged/untracked 隐私扫描与全库巡检通过
 - [x] **PASS** wheel 构建 + 仓库外干净 venv 安装，`qqexport version` /
       `key show` 退出码 0/0；wheel 不含 tests/fixtures/db/keys.json
-- [ ] **SKIP（未验证）** 真库页 1 fixture —— 仍需人工审查后 `git add -f`
+- [x] **PASS** 真库页 1 fixture：2026-10-29 采集并审查（`9eda067`），
+      8 项 fixture 测试全过
 - [ ] **SKIP（未验证）** Python 3.12 —— 延后 CI
 
-**结论：P0 部分验收。** 存在 SKIP，不得写成「P0 已完成」（修正案 §13.6）。
+**结论：P0 部分验收。** 只剩 Python 3.12 一项 SKIP，不得写成「P0 已完成」
+（修正案 §13.6）。
 
 ---
 
@@ -688,3 +691,7 @@ cipher 指纹、WAL 典型帧数、解密耗时与产物大小、任何与 spec 
 12. **内存扫描的成本在候选验证而不是读内存。** 2.3 万个不同候选 × 每进程重复
     验证 ≈ 10 万次 PBKDF2，比读 5 GB 慢一个量级；跨进程去重 + 按 kdf 缓存
     派生 + 候选循环内查 deadline 才能稳定在超时内（R33）
+13. **主库 page 1 不一定是「有 schema 的页」。** QQ 长期不 checkpoint 时，
+    主库 page 1 可能几乎是空的（本机实测 63/4096 非零字节），schema 全在
+    WAL 里。采集页 1 fixture 时不要期待看到 `sqlite_master`/`CREATE TABLE`；
+    它的价值是钉住 1024 头 / salt / HMAC 与解开后的魔数。

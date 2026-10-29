@@ -15,10 +15,12 @@ doctor 11/11、`quick_check == ok`、消息表可查询、WAL 回放有页级证
 
 **待人工验证项（因此不能宣称「P0 已完成」）：**
 
-- `tests/fixtures/nt_msg_header_page1.bin` 尚未采集：需要操作者在真机运行
-  `python tools/capture_fixtures.py`、逐条审查页 1 的全部可打印字符串并输入
-  确认短语后 `git add -f`。未采集前 fixture 测试保持 SKIP。
 - Python 3.12 兼容性：本机只有 3.14，按修正案延后到 CI，尚未验证。
+
+真库页 1 fixture 已于 2026-10-29 采集并审查：页 1 解密后 63/4096 非零字节，
+可打印 ASCII 只有 `SQLite format 3` 与 6 字节碎片，无数字串、无中文；
+fixture 不含表结构（主库 page 1 的 schema 尚未 checkpoint，在 WAL 里），
+它钉的是 1024 字节头 / salt / HMAC 与解开后的 SQLite 魔数。
 
 消息解析与 txt/html/pdf 导出属 P1+，计划尚未编写。
 
