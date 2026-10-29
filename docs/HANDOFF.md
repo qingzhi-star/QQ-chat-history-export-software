@@ -8,6 +8,11 @@
 **结论：P0 已完成**（2026-10-29）。详见 `docs/compat-matrix.md` 与
 `.github/workflows/tests.yml`。
 
+> **历史重写说明（2026-10-29）：** 为纠正 Contributors 归属与提交邮箱泄漏，
+> 全部 40 个提交的作者/提交者已统一为
+> `ZHI QING <168977093+qingzhi-star@users.noreply.github.com>`，并 force-push
+> `main`。下文及修正案/计划里出现的**旧提交哈希仅作历史引用**，不再对应现存对象。
+
 Task 6–10 提交：`4661776`（keyscan）、`ca2c4c8`（keystore）、`98340ce`（decrypt）、
 `a0b0b20`（report+doctor）、`cf3f73e`（cli）；Task 11–13：`6161ed6`（fixture 工具）、
 `8ac7223`（python -m 入口）、`5bc3603`（keyscan 性能）、`8595969`（R34 reserved bytes）、
