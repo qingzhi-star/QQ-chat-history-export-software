@@ -1,0 +1,15 @@
+qqexport — QQ 聊天记录导出工具
+Copyright (c) 2026 qqexport contributors
+
+本项目的 SQLCipher 4 页级解密算法与 WAL 恢复逻辑，参照了以下 MIT 许可项目的公开实现：
+
+  chatlog-keeper
+  Copyright (c) 2026 labazhou2024
+  https://github.com/labazhou2024/chatlog-keeper
+  License: MIT
+
+参照范围限于算法与常量：密钥派生迭代数、页保留区布局、HMAC 构造方式、
+WAL 帧校验和与 commit 边界语义。本项目代码为独立编写，未复制其源码文本。
+
+SQLCipher 加密格式由 Zetetic LLC 设计，相关参数属其公开文档范畴。
+QQ 与 QQ NT 为腾讯公司商标。本项目与腾讯公司无任何关联、未获其授权。
