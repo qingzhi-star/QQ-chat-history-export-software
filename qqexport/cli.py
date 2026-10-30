@@ -25,6 +25,7 @@ from pathlib import Path
 
 from . import __version__, config, doctor, report
 from .core import discover, keyscan, keystore, sqlcipher
+from .export import orchestrator, session
 
 EXIT_OK = 0
 EXIT_FAIL = 1
@@ -84,6 +85,25 @@ def build_parser() -> argparse.ArgumentParser:
 
     kclear = ksub.add_parser("clear", help="删除缓存口令")
     _add_account_args(kclear)
+
+    lst = sub.add_parser("list", help="列出本机会话（标题为可读显示名）")
+    _add_account_args(lst)
+
+    exp = sub.add_parser("export", help="导出会话为 txt/html/pdf")
+    _add_account_args(exp)
+    exp.add_argument("--chat", action="append", default=[],
+                     help="会话 ID（可重复），如 c2c:u_xxx / group:123")
+    exp.add_argument("--all", action="store_true", help="导出全部会话")
+    exp.add_argument("--format", default="html",
+                     help="逗号分隔：txt,html,pdf（默认 html）")
+    exp.add_argument("--out", type=Path, default=Path("export"),
+                     help="输出目录（默认 ./export）")
+    exp.add_argument("--encoding", default="utf-8", help="txt 编码：utf-8 / gbk")
+    exp.add_argument("--shard-size", type=int, default=20000,
+                     help="HTML 分片阈值（默认 20000）")
+    exp.add_argument("--no-media", action="store_true", help="不复制媒体")
+    exp.add_argument("--allow-large-pdf", action="store_true",
+                     help="允许 >30000 条消息生成 PDF")
 
     return p
 
@@ -216,6 +236,68 @@ def _cmd_key_clear(args) -> int:
     return EXIT_OK
 
 
+def _open_source(args) -> session.ExportSource | None:
+    try:
+        account = _pick_account(args)
+    except discover.DiscoveryError as exc:
+        _discover_fail(exc)
+        return None
+    key = keystore.KeyStore().load(account.uin)
+    if not key:
+        print("错误：没有缓存口令。先运行 `qqexport key scan` 或 "
+              "`qqexport key set`。", file=sys.stderr)
+        return None
+    try:
+        return session.ExportSource.open(account, key)
+    except Exception as exc:
+        print(f"错误：打开数据源失败（{type(exc).__name__}）", file=sys.stderr)
+        return None
+
+
+def _cmd_list(args) -> int:
+    source = _open_source(args)
+    if source is None:
+        return EXIT_FAIL
+    try:
+        chats = source.chats()
+        if not chats:
+            print("没有可导出的会话。")
+            return EXIT_OK
+        for c in chats:
+            first = c.first_ts or 0
+            print(f"{c.chat_id}\t{c.messages}\t{first}\t{c.title}")
+        return EXIT_OK
+    finally:
+        source.close()
+
+
+def _cmd_export(args) -> int:
+    if args.all and args.chat:
+        print("错误：--all 与 --chat 不能同时使用。", file=sys.stderr)
+        return EXIT_FAIL
+    formats = {f.strip().lower() for f in args.format.split(",") if f.strip()}
+    if not formats or formats - {"txt", "html", "pdf"}:
+        print("错误：--format 只支持 txt,html,pdf。", file=sys.stderr)
+        return EXIT_FAIL
+    source = _open_source(args)
+    if source is None:
+        return EXIT_FAIL
+    try:
+        chat_ids = [c.chat_id for c in source.chats()] if args.all else list(args.chat)
+        if not chat_ids:
+            print("错误：请用 --chat 指定会话，或用 --all。", file=sys.stderr)
+            return EXIT_FAIL
+        rep = orchestrator.export_chats(
+            source, chat_ids, orchestrator.ExportOptions(
+                formats=formats, out_dir=args.out, encoding=args.encoding,
+                shard_size=args.shard_size, no_media=args.no_media,
+                allow_large_pdf=args.allow_large_pdf))
+        print(rep.to_text())
+        return EXIT_OK if rep.chats_exported else EXIT_FAIL
+    finally:
+        source.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     _force_utf8_stdio()
     args = build_parser().parse_args(argv)
@@ -225,6 +307,10 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_OK
     if args.command == "doctor":
         return _cmd_doctor(args)
+    if args.command == "list":
+        return _cmd_list(args)
+    if args.command == "export":
+        return _cmd_export(args)
     handler = {"scan": _cmd_key_scan, "set": _cmd_key_set,
                "show": _cmd_key_show, "clear": _cmd_key_clear}
     return handler[args.key_command](args)
