@@ -69,6 +69,9 @@ stdlib `sqlite3` 打开、且**含最新消息**的明文数据库。消息解�
 3. **P0 实现计划** — `docs/superpowers/plans/2026-10-24-qq-export-p0-decryption-pipeline.md`
    13 个 task 的逐步 TDD 说明，每步含可粘贴的完整代码。**5833 行，不要通读**，
    只看你要做的那个 task。
+4. **P1 实现计划** — `docs/superpowers/plans/2026-10-29-p1-message-export.md`
+   消息解析 + txt/html/pdf 导出（spec §13 的 P1–P3）；含真实探测基线、任务分解
+   与发布门槛。**这是下一阶段唯一执行入口。**
 
 另有一份执行台账（**git 忽略，不会进仓库，换机器就没了**）：
 `.superpowers/sdd/2026-10-24-qq-export-p0-decryption-pipeline/progress.md`
@@ -335,7 +338,12 @@ git author email 的**本地部分就是用户的真实 QQ 号**（形如 `qz<�
 
 ## 9. 剩余任务与待人工项
 
-**Task 1–13 全部完成，P0 验收通过。** 没有剩余 task。长期维护相关：
+**Task 1–13 全部完成，P0 验收通过。P0 没有剩余 task。**
+
+**下一阶段：P1（消息解析 + txt/html/pdf 导出）**——计划见
+`docs/superpowers/plans/2026-10-29-p1-message-export.md`（2026-10-30 提案）。
+按该计划 T1–T12 执行；**导出功能验收全 PASS 之前不打 tag、不发布**。
+长期维护相关：
 
 - 兼容性由 CI 保证（3.12 / 3.13 / 3.14，windows-latest，测试 + 隐私巡检）；
   新增 Python 小版本或 QQ 版本变化时扩矩阵 / 补 compat-matrix 行。
@@ -343,6 +351,8 @@ git author email 的**本地部分就是用户的真实 QQ 号**（形如 `qz<�
   发布前在真机手动跑一次 `pytest -m live -v -s`。
 - 真机事实：主库 page 1 的 schema 可能尚未 checkpoint（在 WAL 里），所以
   fixture 钉的是头/盐/HMAC 与魔数，不含表结构。
+- P1 新事实：`profile_info.db`/`group_info.db`/`rich_media.db` 同样是
+  SQLCipher 加密（1024 包装，同 key/参数），P1 必须新增伴随库解密。
 
 下面 Task 7–13 的原始说明保留供回溯，接口以源码为准；实现细节、裁定与延后
 minor 在 ledger（`.superpowers/sdd/.../progress.md`，本地不入库）。

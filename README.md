@@ -28,7 +28,9 @@ doctor 11/11、`quick_check == ok`、消息表可查询、WAL 回放有页级证
 fixture 不含表结构（主库 page 1 的 schema 尚未 checkpoint，在 WAL 里），
 它钉的是 1024 字节头 / salt / HMAC 与解开后的 SQLite 魔数。
 
-消息解析与 txt/html/pdf 导出属 P1+，计划尚未编写。
+P1（消息解析 + txt/html/pdf 导出）计划已编写：
+[2026-10-29-p1-message-export.md](docs/superpowers/plans/2026-10-29-p1-message-export.md)。
+按该计划完成并验收后才发布。
 
 ## 安装
 
