@@ -31,9 +31,9 @@ COMPANION_SCHEMA: dict[str, dict[str, tuple[str, ...]]] = {
         "profile_info_adelie": ("1000", "1002", "320001", "320002"),
     },
     "group": {
-        "group_list": ("60001", "60002", "60004", "60005"),
+        "group_list": ("60001", "60002", "60004", "60005", "60007"),
         "group_detail_info_ver1": ("60001", "60007", "60216"),
-        "group_member3": ("60001", "64003", "64004", "64005"),
+        "group_member3": ("60001", "1000", "1001", "1002", "20002", "64003"),
     },
     "rich_media": {
         "file_table": ("40001", "45402", "45405", "45406", "45419"),
@@ -100,7 +100,8 @@ def text_row(*, ts: int, text: str, group: str | None = None,
     return row
 
 
-def create_companion_db(path: Path, *, kind: str) -> Path:
+def create_companion_db(path: Path, *, kind: str,
+                        rows: dict[str, list[dict]] | None = None) -> Path:
     if kind not in COMPANION_SCHEMA:
         raise ValueError(f"unknown companion kind: {kind}")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -108,6 +109,12 @@ def create_companion_db(path: Path, *, kind: str) -> Path:
     try:
         for table, cols in COMPANION_SCHEMA[kind].items():
             _create_table(con, table, cols)
+        for table, table_rows in (rows or {}).items():
+            for row in table_rows:
+                clean = {k: v for k, v in row.items()
+                         if k in COMPANION_SCHEMA[kind].get(table, ())}
+                if clean:
+                    _insert(con, table, clean)
         con.commit()
     finally:
         con.close()
