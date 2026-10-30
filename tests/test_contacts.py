@@ -40,22 +40,31 @@ def loaded(tmp_path, account_uin="123456789"):
                                   account_uin=account_uin)
 
 
-def test_group_card_beats_friend_remark_and_nick(tmp_path):
+def test_group_nick_with_card(tmp_path):
     c = loaded(tmp_path)
-    assert c.display_name("u_a", None, "111") == "群名片A"
-    assert c.display_name("u_b", None, "111") == "群昵称B"
+    assert c.display_name("u_a", None, "111") == "昵称A（群名片A）"
+    assert c.display_name("u_b", None, "111") == "昵称B"
 
 
-def test_friend_remark_beats_nick_and_dual_track(tmp_path):
+def test_friend_nick_beats_remark_and_dual_track(tmp_path):
     c = loaded(tmp_path)
+    assert c.display_name("u_a", None) == "昵称A"
+    assert c.display_name("u_b", None) == "昵称B"
+    assert c.display_name(None, "987654321") == "昵称B（987654321）"
+
+
+def test_card_and_remark_are_only_fallbacks(tmp_path):
+    db = sd.create_companion_db(
+        tmp_path / "p.db", kind="profile",
+        rows={"profile_info_v6": [{"1000": "u_a", "1002": 123456789,
+                                   "20002": None, "20009": "备注A"}]})
+    c = contacts.Contacts.load(db, None, account_uin="123456789")
     assert c.display_name("u_a", None) == "备注A"
-    assert c.display_name("u_b", None) == "备注B"
-    assert c.display_name(None, "987654321") == "备注B"
 
 
-def test_self_uin_returns_me(tmp_path):
+def test_self_uin_uses_own_nickname(tmp_path):
     c = loaded(tmp_path)
-    assert c.display_name(None, "123456789") == "我"
+    assert c.display_name(None, "123456789") == "昵称A（123456789）"
 
 
 def test_fallbacks_for_unknown(tmp_path):
@@ -77,7 +86,7 @@ def test_snapshot_is_deterministic_and_filtered(tmp_path):
     used = {("111", "u_a", None), (None, "u_b", None)}
     snap = c.snapshot(used)
     assert snap["version"] == 1
-    assert [r["name"] for r in snap["used"]] == ["备注B", "群名片A"]
+    assert [r["name"] for r in snap["used"]] == ["昵称B", "昵称A（群名片A）"]
     assert snap == c.snapshot(set(reversed(list(used))))
 
 

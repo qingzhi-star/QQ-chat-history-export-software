@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 import html
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
 from qqexport.export.model import Chat, Message, Segment
-from qqexport.export.txt import _size
+from qqexport.export.txt import _size, clean_markdown
 
 _CSS = """
 :root{--bg:#f5f6f8;--card:#fff;--self:#2f6fed;--self-fg:#fff;--muted:#888}
@@ -21,10 +21,14 @@ header h1{font-size:17px;margin:0}.meta{color:var(--muted);font-size:12px}
 .msg{display:flex;gap:8px;margin:10px 0;align-items:flex-start}
 .msg.self{flex-direction:row-reverse}
 .avatar{width:34px;height:34px;border-radius:50%;background:#9aa7b8;color:#fff;flex:0 0 34px;
- display:flex;align-items:center;justify-content:center;font-size:14px}
+ display:flex;align-items:center;justify-content:center;font-size:14px;overflow:hidden;
+ background-size:cover;background-position:center}
+.avatar img{width:100%;height:100%;object-fit:cover;display:block}
+.emoji{width:20px;height:20px;vertical-align:-4px}
 .bubble{max-width:72%;background:var(--card);border-radius:10px;padding:8px 12px;box-shadow:0 1px 2px #0001}
 .self .bubble{background:var(--self);color:var(--self-fg)}
-.bubble .who{font-size:12px;color:var(--muted);margin-bottom:2px}
+.bubble .who{font-size:12px;color:var(--muted);margin-bottom:2px;display:flex;
+ justify-content:space-between;gap:14px}
 .self .bubble .who{color:#dfe8ff}
 .text{white-space:pre-wrap;word-break:break-word}
 img.media{max-width:100%;border-radius:8px;display:block;margin:4px 0;cursor:zoom-in}
@@ -59,6 +63,8 @@ class HtmlOptions:
     now: datetime | None = None
     account_uin: str = ""
     shard_size: int = 20000
+    emoji_map: dict[int, str] = field(default_factory=dict)
+    link_files: bool = True
 
 
 @dataclass
@@ -72,32 +78,59 @@ def _e(value: object | None) -> str:
     return html.escape(str(value)) if value is not None else ""
 
 
-def _seg_html(seg: Segment) -> str:
+def _segs_text(segments) -> str:
+    parts = []
+    for s in segments:
+        if s.kind == "markdown" and s.text:
+            parts.append(clean_markdown(s.text))
+        elif s.kind in ("text", "gray_tip") and s.text:
+            parts.append(s.text.strip())
+    return " ".join(p for p in parts if p)
+
+
+def _seg_html(seg: Segment, emoji: dict[int, str] | None = None,
+              link_files: bool = True) -> str:
+    if seg.kind == "face" and seg.face_id is not None and emoji:
+        src = emoji.get(seg.face_id)
+        if src:
+            return f'<img class="emoji" src="{_e(src)}" alt="表情">'
     if seg.kind == "text":
         return f'<div class="text">{_e(seg.text)}</div>'
-    if seg.kind in ("image", "video", "voice", "file"):
+    if seg.kind == "image":
         m = seg.media
-        if m is None or m.missing or not m.rel_path:
-            return f'<div class="text">[{_e(seg.kind)} · 本地文件缺失]</div>'
-        src = _e(m.rel_path)
-        if seg.kind == "image":
-            return (f'<a href="{src}" class="no-print"><img class="media" loading="lazy" '
-                    f'src="{src}" alt="图片"></a>')
-        if seg.kind == "video":
-            return f'<video controls preload="metadata" src="{src}"></video>'
-        if seg.kind == "voice":
+        src = None
+        if m is not None:
+            src = m.data_uri or (m.rel_path if not m.missing else None)
+        if not src:
+            return '<div class="text">[图片]（本机无原图）</div>'
+        return (f'<img class="media" loading="lazy" src="{_e(src)}" alt="图片">')
+    if seg.kind == "file":
+        m = seg.media
+        if link_files and m is not None and not m.missing and m.rel_path:
+            src = _e(m.rel_path)
+            name = _e(m.filename or Path(m.rel_path).name)
+            return (f'<div class="text">📄 {name} ({_size(m.size)}) · '
+                    f'<a download href="{src}">下载</a></div>')
+        return '<div class="text">[文件]</div>'
+    if seg.kind in ("video", "voice"):
+        m = seg.media
+        if m is not None and not m.missing and m.rel_path:
+            src = _e(m.rel_path)
+            if seg.kind == "video":
+                return f'<video controls preload="metadata" src="{src}"></video>'
             sec = f"{m.duration_ms // 1000}″" if m.duration_ms else ""
             return (f'<div class="text">▶ 语音 {sec} · '
                     f'<a download href="{src}">下载</a></div>')
-        name = _e(m.filename or Path(m.rel_path).name)
-        return (f'<div class="text">📄 {name} ({_size(m.size)}) · '
-                f'<a download href="{src}">下载</a></div>')
+        return f'<div class="text">[{"视频" if seg.kind == "video" else "语音"}]</div>'
     if seg.kind == "reply":
         quote = ""
-        if seg.quoted is not None and seg.quoted.segments:
+        if seg.quoted is not None:
+            text = _segs_text(seg.quoted.segments) or "[非文本]"
             quote = (f'<blockquote>{_e(seg.quoted.sender_name)}：'
-                     f'{_e(seg.quoted.segments[0].text or "")}</blockquote>')
+                     f'{_e(text)}</blockquote>')
         return quote + f'<div class="text">{_e(seg.text)}</div>'
+    if seg.kind == "markdown":
+        return f'<div class="text">{_e(clean_markdown(seg.text))}</div>'
     if seg.kind == "forward_legacy":
         items = "".join(f'<div>{_e(n)}：{_e(t)}</div>'
                         for n, t in (seg.forward_previews or []))
@@ -118,14 +151,20 @@ def _seg_html(seg: Segment) -> str:
     return f'<div class="text">{_e(seg.text if seg.text else label)}</div>'
 
 
-def _msg_html(msg: Message) -> str:
+def _msg_html(msg: Message, emoji: dict[int, str] | None = None,
+              link_files: bool = True) -> str:
     cls = "msg self" if msg.is_self else "msg other"
-    avatar = _e((msg.sender_name or "?")[:1])
+    if msg.avatar_data:
+        avatar = f'<div class="avatar"><img src="{_e(msg.avatar_data)}" alt=""></div>'
+    elif msg.avatar_rel:
+        avatar = f'<div class="avatar"><img src="{_e(msg.avatar_rel)}" alt=""></div>'
+    else:
+        avatar = f'<div class="avatar">{_e((msg.sender_name or "?")[:1])}</div>'
     stamp = datetime.fromtimestamp(msg.ts).strftime("%H:%M:%S")
-    parts = "".join(_seg_html(s) for s in msg.segments)
-    return (f'<div class="{cls}"><div class="avatar">{avatar}</div>'
-            f'<div class="bubble"><div class="who">{_e(msg.sender_name)} · {stamp}</div>'
-            f'{parts}</div></div>')
+    parts = "".join(_seg_html(s, emoji, link_files) for s in msg.segments)
+    return (f'<div class="{cls}">{avatar}'
+            f'<div class="bubble"><div class="who"><span>{_e(msg.sender_name)}</span>'
+            f'<span>{stamp}</span></div>{parts}</div></div>')
 
 
 def _header_html(chat: Chat, messages: list[Message], now: datetime,
@@ -139,7 +178,9 @@ def _header_html(chat: Chat, messages: list[Message], now: datetime,
 
 
 def _write_doc(path: Path, chat: Chat, messages: list[Message], now: datetime,
-               account: str, nav: str = "") -> None:
+               account: str, nav: str = "",
+               emoji: dict[int, str] | None = None,
+               link_files: bool = True) -> None:
     with open(path, "w", encoding="utf-8") as f:
         f.write("<!DOCTYPE html>\n<html lang=\"zh-CN\"><head><meta charset=\"utf-8\">")
         f.write(f"<title>{_e(chat.title)}</title><style>{_CSS}</style></head><body>")
@@ -154,7 +195,7 @@ def _write_doc(path: Path, chat: Chat, messages: list[Message], now: datetime,
             if day != current_day:
                 current_day = day
                 f.write(f'<div class="day"><span>{day:%Y-%m-%d}</span></div>')
-            f.write(_msg_html(msg))
+            f.write(_msg_html(msg, emoji, link_files))
         f.write('</div><footer class="no-print">qqexport · 本地离线导出</footer>')
         f.write('<div id="lightbox"><img id="big" alt=""></div>')
         f.write(f"<script>{_JS}</script></body></html>")
@@ -190,7 +231,8 @@ def write_html(chat: Chat, out_dir: Path, opts: HtmlOptions) -> HtmlResult:
         nav = f'<div class="no-print">分片：{links}</div>'
     for name, chunk in chunks:
         path = out_dir / f"{name}.html"
-        _write_doc(path, chat, chunk, now, opts.account_uin, nav if len(chunks) > 1 else "")
+        _write_doc(path, chat, chunk, now, opts.account_uin,
+                   nav if len(chunks) > 1 else "", opts.emoji_map, opts.link_files)
         files.append(path)
     if len(chunks) > 1:
         index = out_dir / "index.html"

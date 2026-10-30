@@ -308,6 +308,40 @@ def discover_accounts(explicit: Path | None = None,
         "<数字QQ号>\\nt_qq\\nt_db\\nt_msg.db）。")
 
 
+def _activity_score(account: QQAccount) -> float:
+    """当前登录账号通常有最新的 WAL/主库写入时间。"""
+    best = 0.0
+    for name in ("nt_msg.db-wal", "nt_msg.db", "nt_msg.db-shm"):
+        p = account.db_dir / name
+        try:
+            if p.is_file():
+                best = max(best, p.stat().st_mtime)
+        except OSError:
+            continue
+    return best
+
+
+def detect_active_account(accounts: list[QQAccount], *,
+                          min_gap_s: float = 1.0) -> QQAccount:
+    """按最近写入时间智能识别当前登录的 QQ 号。
+
+    两个账号活跃度相同（或都没有写入记录）时不猜，抛 AmbiguousAccountError，
+    由调用方回退到显式 uin/配置。
+    """
+    if not accounts:
+        raise NoAccountFound("没有可识别的 QQ 账号数据目录。")
+    if len(accounts) == 1:
+        return accounts[0]
+    ranked = sorted(accounts, key=_activity_score, reverse=True)
+    top, second = ranked[0], ranked[1]
+    if (_activity_score(top) <= 0
+            or _activity_score(top) - _activity_score(second) <= min_gap_s):
+        raise AmbiguousAccountError(
+            "无法唯一识别当前登录的 QQ 号（多个账号近期都有写入）。候选："
+            + _format_candidates(accounts) + "。请显式指定 uin。")
+    return top
+
+
 def select_account(accounts: list[QQAccount],
                    requested_uin: str | None) -> QQAccount:
     """唯一确定则返回；否则抛 AmbiguousAccountError（修正案 A §2.3）。

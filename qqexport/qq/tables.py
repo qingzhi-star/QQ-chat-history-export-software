@@ -6,7 +6,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Iterator
 
-from .msgmap import COL_PEER_ID, COL_TIMESTAMP, MSG_COLUMNS
+from .msgmap import COL_MSG_ID, COL_PEER_ID, COL_TIMESTAMP, MSG_COLUMNS
 
 KIND_C2C = "c2c"
 KIND_GROUP = "group"
@@ -87,7 +87,8 @@ def iter_chat_rows(con: sqlite3.Connection, kind: str, peer: str, *,
     if name is None or COL_PEER_ID not in columns_of(con, name):
         return
     sql = (f'SELECT {", ".join(_quote(c) for c in MSG_COLUMNS if c in columns_of(con, name))} '
-           f'FROM {_quote(name)} WHERE {_quote(COL_PEER_ID)} = ?')
+           f'FROM {_quote(name)} WHERE {_quote(COL_PEER_ID)} = ? '
+           f'ORDER BY {_quote(COL_TIMESTAMP)} ASC, {_quote(COL_MSG_ID)} ASC')
     cursor = con.execute(sql, (peer,))
     while True:
         page = cursor.fetchmany(batch)

@@ -9,6 +9,7 @@ from pathlib import Path
 from qqexport.core import companions, decrypt, discover
 from qqexport.core import sqlcipher as sc
 from qqexport.qq import contacts, media, messages, tables
+from qqexport.qq import msgmap as mm
 
 
 class ExportError(RuntimeError):
@@ -20,6 +21,7 @@ class ChatInfo:
     chat_id: str
     kind: str
     peer: str
+    account: str
     title: str
     subtitle: str | None
     messages: int
@@ -73,7 +75,8 @@ class ExportSource:
             index = media.build_index(account.media_dir)
             return cls(result.plaintext_db, contacts_obj, index, account.uin,
                        warnings=warnings, tmp=tmp,
-                       meta={"account": account, "decrypt": result})
+                       meta={"account": account, "decrypt": result,
+                             "nt_data": str(account.db_dir.parent / "nt_data")})
         except Exception:
             tmp.cleanup()
             raise
@@ -81,7 +84,8 @@ class ExportSource:
     @classmethod
     def from_parts(cls, msg_db: Path, contacts_obj: contacts.Contacts,
                    media_index: media.MediaIndex, account_uin: str) -> "ExportSource":
-        return cls(msg_db, contacts_obj, media_index, account_uin)
+        return cls(msg_db, contacts_obj, media_index, account_uin,
+                   meta={"synthetic": True})
 
     def __enter__(self) -> "ExportSource":
         return self
@@ -98,24 +102,59 @@ class ExportSource:
         con = sqlite3.connect(self.msg_db.resolve().as_uri() + "?mode=ro", uri=True)
         try:
             summaries = tables.list_chats(con)
+            table_set = tables.discover(con)
+            out = []
+            for s in summaries:
+                if s.kind == tables.KIND_GROUP:
+                    title = self.contacts.group_name(s.peer) or f"群{s.peer}"
+                    subtitle = f"群号 {s.peer}"
+                    account = s.peer
+                else:
+                    # 只有 40011=1 系统事件、没有正常消息的会话不展示
+                    if table_set.c2c is not None:
+                        row = con.execute(
+                            f'SELECT COUNT(*), '
+                            f'SUM(CASE WHEN COALESCE("{mm.COL_OUTER_TYPE}", 0) IN (1) '
+                            f'THEN 0 ELSE 1 END) '
+                            f'FROM "{table_set.c2c}" WHERE "{mm.COL_PEER_ID}" = ?',
+                            (s.peer,)).fetchone()
+                        if row is None or not row[1]:
+                            continue
+                    account = self._peer_uin(s.kind, s.peer) or s.peer
+                    title = self.contacts.display_name(s.peer, account)
+                    subtitle = None
+                out.append(ChatInfo(s.chat_id, s.kind, s.peer, account, title,
+                                    subtitle, s.messages, s.first_ts, s.last_ts))
+            return out
         finally:
             con.close()
-        out = []
-        for s in summaries:
-            if s.kind == tables.KIND_GROUP:
-                title = self.contacts.group_name(s.peer) or f"群{s.peer}"
-                subtitle = f"群号 {s.peer}"
-            else:
-                title = self.contacts.display_name(s.peer, None)
-                subtitle = None
-            out.append(ChatInfo(s.chat_id, s.kind, s.peer, title, subtitle,
-                                s.messages, s.first_ts, s.last_ts))
-        return out
+
+    def _peer_uin(self, kind: str, peer: str) -> str | None:
+        con = sqlite3.connect(self.msg_db.resolve().as_uri() + "?mode=ro", uri=True)
+        try:
+            table = tables.discover(con)
+            name = table.c2c if kind == tables.KIND_C2C else table.group
+            if name is None:
+                return None
+            row = con.execute(
+                f'SELECT "{mm.COL_PEER_UIN}" FROM "{name}" '
+                f'WHERE "{mm.COL_PEER_ID}" = ? AND "{mm.COL_PEER_UIN}" IS NOT NULL '
+                f'LIMIT 1', (peer,)).fetchone()
+            return str(row[0]) if row and row[0] else None
+        finally:
+            con.close()
 
     def iter_messages(self, chat_id: str):
         kind, peer = chat_id.split(":", 1)
+        ctx = messages.ParseContext(
+            account_uin=self.ctx.account_uin,
+            kind=kind,
+            group_id=peer if kind == tables.KIND_GROUP else None,
+            display_name=self.ctx.display_name,
+            resolve_media=self.ctx.resolve_media,
+            resolve_uin=self.contacts.uin_of)
         con = sqlite3.connect(self.msg_db.resolve().as_uri() + "?mode=ro", uri=True)
         try:
-            yield from messages.iter_messages(con, kind, peer, self.ctx)
+            yield from messages.iter_messages(con, kind, peer, ctx)
         finally:
             con.close()

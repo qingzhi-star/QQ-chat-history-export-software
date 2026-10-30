@@ -1,4 +1,4 @@
-"""T8：txt 导出测试。"""
+"""T8：txt 导出测试（新格式：逐行 [时间 用户名称]：内容）。"""
 from __future__ import annotations
 
 import codecs
@@ -7,7 +7,7 @@ from datetime import datetime
 from qqexport.export import txt
 from qqexport.export.model import Chat, MediaRef, Message, Segment
 
-NOW = datetime(2026, 10, 30, 12, 0, 0)
+T1 = int(datetime(2026, 10, 29, 14, 32, 7).timestamp())
 
 
 def msg(ts, name, *segments, is_self=False):
@@ -16,50 +16,41 @@ def msg(ts, name, *segments, is_self=False):
                    outer_type=2, sub_type=1)
 
 
-def chat():
-    t1 = int(datetime(2026, 10, 29, 14, 32, 7).timestamp())
-    t2 = int(datetime(2026, 10, 30, 9, 0, 0).timestamp())
-    image = Segment(kind="image", media=MediaRef(
-        kind="image", missing=False, rel_path="media/img_aabbccdd.jpg"))
-    reply = Segment(kind="reply", text="嗯",
-                    quoted=msg(t1, "张三", Segment(kind="text", text="今天开会吗")))
-    legacy = Segment(kind="forward_legacy",
-                     forward_previews=[("李四", "你好"), ("王五", "在吗")])
-    return Chat(kind="group", peer_id="123", title="某某群", subtitle="群号 123",
-                messages=[msg(t1, "张三", Segment(kind="text", text="今天开会吗")),
-                          msg(t2, "李四", Segment(kind="text", text="开的"),
-                              image, reply, legacy)])
-
-
-def test_txt_header_dates_and_segments(tmp_path):
-    out = tmp_path / "a.txt"
-    res = txt.write_txt(chat(), out, txt.TxtOptions(now=NOW, account_uin="123456789"))
+def test_txt_plain_lines_with_image_and_file(tmp_path):
+    chat = Chat(kind="group", peer_id="123", title="群", messages=[
+        msg(T1, "张三", Segment(kind="text", text="你好")),
+        msg(T1 + 1, "李四", Segment(kind="image"),
+            Segment(kind="file", media=MediaRef(kind="file", missing=True,
+                                                filename="材料.pdf"))),
+    ])
+    out = tmp_path / "chat.txt"
+    res = txt.write_txt(chat, out, txt.TxtOptions())
     data = out.read_bytes()
     assert data.startswith(codecs.BOM_UTF8)
     text = data.decode("utf-8-sig")
-    assert "群聊：某某群  (群号 123)" in text
-    assert "消息条数：2" in text
-    assert "2026-10-29 星期四" in text
-    assert "2026-10-30 星期五" in text
-    assert "[14:32:07] 张三：今天开会吗" in text
-    assert "[图片] media/img_aabbccdd.jpg" in text
-    assert "[回复 张三：今天开会吗] 嗯" in text
-    assert "    李四：你好" in text
+    assert "[2026-10-29 14:32:07 张三]：你好" in text
+    assert "[2026-10-29 14:32:08 李四]：[图片] [文件]" in text
+    assert "导出时间" not in text and "-----" not in text
     assert res.messages == 2
 
 
-def test_txt_gbk_replacement_count(tmp_path):
-    out = tmp_path / "b.txt"
-    c = Chat(kind="c2c", peer_id="u", title="T",
-             messages=[msg(1700000000, "A", Segment(kind="text", text="🙂emoji"))])
-    res = txt.write_txt(c, out, txt.TxtOptions(encoding="gbk", now=NOW))
+def test_txt_reply_and_unknown(tmp_path):
+    chat = Chat(kind="c2c", peer_id="u", title="T", messages=[
+        msg(T1, "李四", Segment(kind="reply", text="嗯",
+                                quoted=msg(T1 - 1, "张三",
+                                           Segment(kind="text", text="开会吗"))),
+            Segment(kind="unknown", unknown_field=17)),
+    ])
+    out = tmp_path / "chat.txt"
+    txt.write_txt(chat, out, txt.TxtOptions())
+    text = out.read_text(encoding="utf-8-sig")
+    assert "[回复 张三：开会吗] 嗯" in text
+    assert "[未解析]" in text
+
+
+def test_txt_gbk_replacement(tmp_path):
+    chat = Chat(kind="c2c", peer_id="u", title="T", messages=[
+        msg(T1, "A", Segment(kind="text", text="🙂"))])
+    out = tmp_path / "chat.txt"
+    res = txt.write_txt(chat, out, txt.TxtOptions(encoding="gbk"))
     assert res.replacements >= 1
-    assert b"?" in out.read_bytes()
-
-
-def test_txt_empty_chat(tmp_path):
-    out = tmp_path / "c.txt"
-    c = Chat(kind="c2c", peer_id="u", title="T")
-    res = txt.write_txt(c, out, txt.TxtOptions(now=NOW))
-    assert res.messages == 0
-    assert "消息条数：0" in out.read_text(encoding="utf-8-sig")

@@ -30,6 +30,12 @@ class Member:
     card: str | None = None
 
 
+def _finish_name(name: str, uin: str | None) -> str:
+    if uin and not name.startswith("QQ号") and not name.endswith(f"（{uin}）"):
+        return f"{name}（{uin}）"
+    return name
+
+
 @dataclass
 class Contacts:
     account_uin: str = ""
@@ -131,25 +137,37 @@ class Contacts:
     def group_name(self, group_id: str | None) -> str | None:
         return self.group_names.get(group_id) if group_id else None
 
-    def display_name(self, uid: str | None, uin: str | None,
-                     group_id: str | None = None) -> str:
-        if uin and uin == self.account_uin:
-            return SELF_NAME
+    def uin_of(self, uid: str | None, uin: str | None,
+               group_id: str | None = None) -> str | None:
         if group_id:
             member = (self.members_by_uid.get((group_id, uid)) if uid else None) \
                 or (self.members_by_uin.get((group_id, uin)) if uin else None)
-            if member:
-                if member.card:
-                    return member.card
-                if member.nick:
-                    return member.nick
+            if member and member.uin:
+                return member.uin
         friend = (self.friends_by_uid.get(uid) if uid else None) \
             or (self.friends_by_uin.get(uin) if uin else None)
-        if friend:
-            if friend.remark:
-                return friend.remark
-            if friend.nick:
-                return friend.nick
+        if friend and friend.uin:
+            return friend.uin
+        return uin
+
+    def display_name(self, uid: str | None, uin: str | None,
+                     group_id: str | None = None) -> str:
+        """资料昵称优先；群名片只作括号补充；最后附 QQ 号。"""
+        member = None
+        if group_id:
+            member = (self.members_by_uid.get((group_id, uid)) if uid else None) \
+                or (self.members_by_uin.get((group_id, uin)) if uin else None)
+        friend = (self.friends_by_uid.get(uid) if uid else None) \
+            or (self.friends_by_uin.get(uin) if uin else None)
+        nick = (friend.nick if friend and friend.nick else
+                member.nick if member and member.nick else
+                friend.remark if friend and friend.remark else
+                member.card if member and member.card else None)
+        card = member.card if member and member.card else None
+        if nick and card and card != nick:
+            return _finish_name(f"{nick}（{card}）", uin)
+        if nick:
+            return _finish_name(nick, uin)
         if uin:
             return f"QQ号{uin}"
         if uid:

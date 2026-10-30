@@ -94,16 +94,16 @@ def build_parser() -> argparse.ArgumentParser:
     exp.add_argument("--chat", action="append", default=[],
                      help="会话 ID（可重复），如 c2c:u_xxx / group:123")
     exp.add_argument("--all", action="store_true", help="导出全部会话")
-    exp.add_argument("--format", default="html",
-                     help="逗号分隔：txt,html,pdf（默认 html）")
-    exp.add_argument("--out", type=Path, default=Path("export"),
-                     help="输出目录（默认 ./export）")
+    exp.add_argument("--format", default="html", choices=["txt", "html", "pdf"],
+                     help="单格式：txt / html / pdf（默认 html）")
+    exp.add_argument("--out", type=Path, default=Path("."),
+                     help="导出位置（会在其下创建 QQ聊天记录导出）")
     exp.add_argument("--encoding", default="utf-8", help="txt 编码：utf-8 / gbk")
-    exp.add_argument("--shard-size", type=int, default=20000,
-                     help="HTML 分片阈值（默认 20000）")
-    exp.add_argument("--no-media", action="store_true", help="不复制媒体")
     exp.add_argument("--allow-large-pdf", action="store_true",
                      help="允许 >30000 条消息生成 PDF")
+
+    gui = sub.add_parser("gui", help="打开图形界面（选择会话/格式/导出位置）")
+    _add_account_args(gui)
 
     return p
 
@@ -117,7 +117,13 @@ def _discover_fail(exc: discover.DiscoveryError) -> int:
 
 def _pick_account(args) -> discover.QQAccount:
     accounts = discover.discover_accounts(explicit=args.data_dir)
-    return discover.select_account(accounts, args.uin)
+    if args.uin:
+        return discover.select_account(accounts, args.uin)
+    try:
+        return discover.detect_active_account(accounts)
+    except discover.AmbiguousAccountError:
+        uin = config.Config.load().uin
+        return discover.select_account(accounts, uin)
 
 
 def _read_passphrase(args) -> str | None:
@@ -276,8 +282,8 @@ def _cmd_export(args) -> int:
         print("错误：--all 与 --chat 不能同时使用。", file=sys.stderr)
         return EXIT_FAIL
     formats = {f.strip().lower() for f in args.format.split(",") if f.strip()}
-    if not formats or formats - {"txt", "html", "pdf"}:
-        print("错误：--format 只支持 txt,html,pdf。", file=sys.stderr)
+    if len(formats) != 1 or formats - {"txt", "html", "pdf"}:
+        print("错误：--format 只能选一个：txt / html / pdf。", file=sys.stderr)
         return EXIT_FAIL
     source = _open_source(args)
     if source is None:
@@ -289,10 +295,12 @@ def _cmd_export(args) -> int:
             return EXIT_FAIL
         rep = orchestrator.export_chats(
             source, chat_ids, orchestrator.ExportOptions(
-                formats=formats, out_dir=args.out, encoding=args.encoding,
-                shard_size=args.shard_size, no_media=args.no_media,
-                allow_large_pdf=args.allow_large_pdf))
+                format=formats.pop(), out_base=args.out,
+                encoding=args.encoding, allow_large_pdf=args.allow_large_pdf,
+                ))
         print(rep.to_text())
+        for d in rep.exported_dirs:
+            print(f"已导出：{d}")
         return EXIT_OK if rep.chats_exported else EXIT_FAIL
     finally:
         source.close()
@@ -311,6 +319,9 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_list(args)
     if args.command == "export":
         return _cmd_export(args)
+    if args.command == "gui":
+        from .gui import run_gui
+        return run_gui(data_dir=args.data_dir, uin=args.uin)
     handler = {"scan": _cmd_key_scan, "set": _cmd_key_set,
                "show": _cmd_key_show, "clear": _cmd_key_clear}
     return handler[args.key_command](args)

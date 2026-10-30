@@ -39,6 +39,7 @@ class ExportReport:
     pdf_pages: int | None = None
     pdf_error: str | None = None
     warnings: list[str] = field(default_factory=list)
+    exported_dirs: list[str] = field(default_factory=list)
 
     @property
     def consistent(self) -> bool:
