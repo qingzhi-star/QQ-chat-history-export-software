@@ -1,12 +1,11 @@
 # 交接说明 —— QQ 聊天记录导出工具（P0 已完成，进入 P1）
 
-**最后更新：** 2026-10-29
-**当前分支：** `main`（`p0-decryption-pipeline` 已合并并删除）
-**进度：** P0 的 13 个 task **全部完成并验收**；普通测试 **389 passed / 0 skipped**，
-真机 live 冒烟 **9 passed**；CI（windows-latest）在 **3.12 / 3.13 / 3.14**
-三腿全绿（测试 + 全库隐私巡检）。
-**结论：P0 已完成**（2026-10-29）。详见 `docs/compat-matrix.md` 与
-`.github/workflows/tests.yml`。
+**最后更新：** 2026-10-30
+**当前分支：** `main`
+**进度：** P0 已完成（2026-10-29）；**P1 已完成（2026-10-30）**：消息解析 +
+`list`/`export`，txt/html/pdf、媒体、联系人、报告。普通测试 **486 passed**，
+live **10 passed**；CI 3.12/3.13/3.14 全绿。
+**结论：功能完整，可发布；尚未打 tag。**
 
 > **历史重写说明（2026-10-29）：** 为纠正 Contributors 归属与提交邮箱泄漏，
 > 全部 40 个提交的作者/提交者已统一为
@@ -338,21 +337,23 @@ git author email 的**本地部分就是用户的真实 QQ 号**（形如 `qz<�
 
 ## 9. 剩余任务与待人工项
 
-**Task 1–13 全部完成，P0 验收通过。P0 没有剩余 task。**
+**P0（Task 1–13）与 P1（T1–T12）均已完成并验收。** 没有阻塞发布的代码任务。
 
-**下一阶段：P1（消息解析 + txt/html/pdf 导出）**——计划见
-`docs/superpowers/plans/2026-10-29-p1-message-export.md`（2026-10-30 提案）。
-按该计划 T1–T12 执行；**导出功能验收全 PASS 之前不打 tag、不发布**。
-长期维护相关：
+**发布：** 功能完整，可人工打 `v*` tag 触发 GitHub Release；打之前建议在真机
+再跑一次 `pytest -m live -v -s` 与 `python -m qqexport export ...` 复核。
+
+**可选后续（不阻塞发布）：** Web UI（spec §9.2）、语音 SILK 转码（P4）、
+PDF 页码（CDP）、PyInstaller。长期维护相关：
 
 - 兼容性由 CI 保证（3.12 / 3.13 / 3.14，windows-latest，测试 + 隐私巡检）；
   新增 Python 小版本或 QQ 版本变化时扩矩阵 / 补 compat-matrix 行。
-- live 冒烟与需口令的 fixture 测试不进 CI（不读真实内存、不用用户密钥），
-  发布前在真机手动跑一次 `pytest -m live -v -s`。
-- 真机事实：主库 page 1 的 schema 可能尚未 checkpoint（在 WAL 里），所以
-  fixture 钉的是头/盐/HMAC 与魔数，不含表结构。
-- P1 新事实：`profile_info.db`/`group_info.db`/`rich_media.db` 同样是
-  SQLCipher 加密（1024 包装，同 key/参数），P1 必须新增伴随库解密。
+- live 冒烟、导出验收与需口令的 fixture 测试不进 CI（不读真实内存、不用
+  用户密钥），发布前在真机手动跑。
+- 真机事实：主库 page 1 的 schema 可能尚未 checkpoint（在 WAL 里），fixture
+  钉的是头/盐/HMAC 与魔数；`profile_info.db`/`group_info.db`/`rich_media.db`
+  同样是 SQLCipher 加密（1024 包装、同参数）。
+- 真机事实（R36）：文件页数可能大于页 1 头声明的页数（曾见 1024 vs 698），
+  尾部是旧页/零页；解密按头截断，否则会误判 300+ 页损坏。
 
 下面 Task 7–13 的原始说明保留供回溯，接口以源码为准；实现细节、裁定与延后
 minor 在 ledger（`.superpowers/sdd/.../progress.md`，本地不入库）。
@@ -629,6 +630,7 @@ cipher 指纹、WAL 典型帧数、解密耗时与产物大小、任何与 spec 
 | R33 | `scan_key` 跨进程共享 `seen`；`detect_params` 按 kdf 缓存派生；候选循环内查 deadline | 真机 8 进程/5 GB 内存把 2.3 万候选放大成约 10 万次 PBKDF2，120s 与 600s 都超时；修复后 70.2s 完成 |
 | R34 | **保留**页 1 第 20 字节（SQLite reserved bytes），删除 `normalize_page1_header` | 真机实测该字节是 80 而密文尾 reserve 是 48；强行写 48 会让整库 `quick_check` 报 Fragmentation、产物被判 failed |
 | R35 | 保留 `requires-python >=3.12`，补 Windows CI 矩阵 3.12/3.13/3.14 | 公开长期维护/分发要求声明可验证；CI 不读真实内存、不用密钥、不上传产物；证据 run 40821758496 / 40821952392 |
+| R36 | 解密按页 1 头的 database size 截断尾页 | 真机文件 1024 页但头声明 698 页，尾部旧页 HMAC 必然失败；不截断会把好库误判成 lossy（326 corrupt） |
 
 ---
 
@@ -674,6 +676,23 @@ cipher 指纹、WAL 典型帧数、解密耗时与产物大小、任何与 spec 
 
 **结论：P0 已完成（2026-10-29）。** 全部门槛 PASS，无 SKIP。
 
+### 12.1 P1 验收（2026-10-30）
+
+| 门槛 | 结果 |
+|---|---|
+| 普通测试 486 + live 10 | PASS |
+| `list` 真实会话、标题可读 | PASS（私聊/群名均解析） |
+| 真实 c2c + group 导出 txt/html/pdf | PASS（643 条全部正常；PDF `%PDF-` 34 KB） |
+| 最近的消息在 | PASS（live 断言最近 30 天内有消息） |
+| HTML 零外部资源 / 图片与媒体 | PASS（无 `src/href` 外链；媒体 78 找到、50 缺失占位） |
+| 报告计数自洽 | PASS（总=正常+降级+失败） |
+| 同一快照两次导出字节一致 | PASS（固定时钟，html/txt 逐字节相等） |
+| 源库只读 | PASS（db/profile/group identity 未变） |
+| 无 `.partial`/明文残留 | PASS（导出目录为临时目录并清理） |
+| 发布门 wheel | PASS（新增模块全部包含） |
+
+**结论：P1 已完成，功能完整可发布；未打 tag。**
+
 ---
 
 ## 13. 这个项目实际踩过的坑（别再踩）
@@ -716,3 +735,6 @@ cipher 指纹、WAL 典型帧数、解密耗时与产物大小、任何与 spec 
 14. **公开仓库的 CI 不得包含 live 与真实密钥。** CI 上 fixture 的两项口令测试
     因无 KeyStore 而 SKIP 是**预期**；不要为了「全绿」在 CI 里伪造密钥或缓存。
     CI 只跑合成数据 + 隐私巡检，live/口令类永远留在真机手动执行。
+15. **文件大小 ≠ SQLite 逻辑页数。** 真机见过 1024 页文件、页 1 头只声明 698 页，
+    尾部是旧密文/零页；按文件大小解密会误报 326 个 HMAC 损坏页。必须读页 1 头
+    offset 28 的 database size，并在 WAL 后再次截断（R36）。

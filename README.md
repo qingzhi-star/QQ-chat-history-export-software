@@ -8,16 +8,16 @@
 
 ## 当前进度
 
-**P0 已完成**（2026-10-29）。解密链路：定位数据目录 → 取密钥 → 解密 → 产出
-明文 SQLite。本机实测（Windows 11 x64 / Python 3.14.6 / QQ NT 9.9.36-53644）：
-doctor 11/11、`quick_check == ok`、消息表可查询、WAL 回放有页级证据、
-同一快照两次解密一致、源目录只读性未发现删除/改写；发布轮子在干净 venv 中
-`qqexport version` / `key show` 退出码 0。详见
-[docs/compat-matrix.md](docs/compat-matrix.md)。
+**P0 已完成**（2026-10-29）：解密链路（定位数据目录 → 取密钥 → 解密 → 明文 SQLite）。
+**P1 已完成**（2026-10-30）：消息解析 + `list` / `export`，支持 txt / html / pdf、
+媒体复制、联系人显示名与导出报告。真机验收：导出私聊 + 群聊共 643 条消息全部正常，
+HTML 零外链、PDF 生成、txt BOM、媒体按引用复制；同一快照两次导出字节一致、源库只读、
+无 `.partial` 残留。详见 [docs/compat-matrix.md](docs/compat-matrix.md) 与
+[P1 计划](docs/superpowers/plans/2026-10-29-p1-message-export.md)。
 
-**发布状态：尚未发布。** 发布门槛是 P1（消息解析 + txt/html/pdf 导出）完成后
-的人工验收；在此之前不打 tag、不创建 Release。发布工作流已就绪
-（`.github/workflows/release.yml`），但只在功能完整后由人工打 `v*` tag 触发。
+**发布状态：功能已完整，可发布；尚未打 tag。** 发布工作流
+（`.github/workflows/release.yml`）已就绪，人工打 `v*` tag 即构建 wheel/sdist
+并创建 GitHub Release。
 
 **兼容性**：`requires-python >=3.12`；CI 在 `windows-latest` 上验证
 **3.12 / 3.13 / 3.14** 三条腿（测试 + 全库隐私巡检全绿）。真实 QQ 的 live
@@ -27,10 +27,6 @@ doctor 11/11、`quick_check == ok`、消息表可查询、WAL 回放有页级证
 可打印 ASCII 只有 `SQLite format 3` 与 6 字节碎片，无数字串、无中文；
 fixture 不含表结构（主库 page 1 的 schema 尚未 checkpoint，在 WAL 里），
 它钉的是 1024 字节头 / salt / HMAC 与解开后的 SQLite 魔数。
-
-P1（消息解析 + txt/html/pdf 导出）计划已编写：
-[2026-10-29-p1-message-export.md](docs/superpowers/plans/2026-10-29-p1-message-export.md)。
-按该计划完成并验收后才发布。
 
 ## 安装
 

@@ -6,6 +6,7 @@
 | 验证日期 | Windows 版本 / 架构 | Python | QQ 版本 | wrapper 形状 | cipher 指纹 | WAL 状态 | 检查结论 |
 |---|---|---|---|---|---|---|---|
 | 2026-10-28 | Windows 11 专业版 10.0.26200 / x64 | 3.14.6 | 9.9.36-53644 | 1024 字节自定义头 + 4096 页；`size % 4096 == 1024` | `sha512/sha1/48` | `ok`：45 帧，最后 commit 第 45 帧，commit 后 415 页；13/20 个已提交页与主库不同 | **PASS**：doctor 11/11 ok；`quick_check == ok`；`c2c_msg_table` / `group_msg_table` 可 `SELECT COUNT(*)`（86 / 985）；同一快照两次解密 SHA-256 一致；源目录 identity 三元组未变；页 1 SQLite reserved bytes = 80（≠ 密文尾 reserve 48，R34） |
+| 2026-10-30 | 同上 | 3.14.6 | 9.9.36-53644 | 同上；文件 1024 页 / 头声明 698 页（R36） | `sha512/sha1/48` | `ok`：93 帧，最后 commit 93，commit 后 698 页 | **P1 PASS**：`list` 可读标题；真实 c2c+group 导出 643 条（0 降级）；txt BOM、html 零外链、pdf `%PDF-` 34 KB；媒体 78 找到/50 缺失占位；同一快照两次导出字节一致；源库 identity 未变；无 `.partial` |
 
 ## 备注
 
