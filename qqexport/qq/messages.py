@@ -1,18 +1,25 @@
-"""T4：行 → Message 的基础解析（P1）。
+"""T4/T5：行 → Message 解析（P1）。
 
-设计：单条消息失败只降级为 unknown segment，绝不中止整批。
-媒体解析通过 `ParseContext.resolve_media` 注入（T7 实现）；T4 只填元数据。
+设计：单条消息/单元素失败只降级 unknown，绝不中止整批。
+媒体解析通过 `ParseContext.resolve_media` 注入（T7 实现）；此处只填元数据。
 """
 from __future__ import annotations
 
+import json
+import sqlite3
 from dataclasses import dataclass
 from typing import Callable
-import sqlite3
+from xml.etree import ElementTree
 
 from qqexport.export.model import MediaRef, Message, Segment
 from . import msgmap as mm
 from . import proto
 from . import tables
+
+MAX_REPLY_DEPTH = 8
+MAX_FORWARD_CHARS = 500
+_REPLY_FIELDS = (mm.F_REPLY_BODY, mm.F_REPLY_UID, mm.F_REPLY_TS,
+                 mm.F_REPLY_SUMMARY)
 
 
 def _default_name(uid: str | None, uin: str | None,
@@ -60,9 +67,88 @@ def _media(child: proto.Parsed, kind: str, ctx: ParseContext) -> MediaRef:
                     size=size, duration_ms=duration, filename=filename)
 
 
-def parse_element(child_bytes: bytes, ctx: ParseContext) -> Segment:
+def _json_meta(text: str) -> dict:
+    try:
+        data = json.loads(text)
+    except (ValueError, TypeError):
+        return {"raw": text[:200]}
+    return data if isinstance(data, dict) else {"value": data}
+
+
+def _legacy_previews(xml_text: str) -> list[tuple[str, str]]:
+    try:
+        root = ElementTree.fromstring(xml_text)
+    except ElementTree.ParseError:
+        return []
+    out: list[tuple[str, str]] = []
+    total = 0
+    for item in root.iter("dataitem"):
+        name = (item.findtext("sourcename") or "").strip()
+        desc = (item.findtext("datadesc") or "").strip()
+        room = MAX_FORWARD_CHARS - total - len(name)
+        if room <= 0:
+            break
+        desc = desc[:room]
+        out.append((name, desc))
+        total += len(name) + len(desc)
+        if total >= MAX_FORWARD_CHARS:
+            break
+    return out
+
+
+def _quoted_message(body: bytes, ctx: ParseContext, *, depth: int,
+                    uid: str | None, ts: int) -> Message:
+    parsed = proto.as_message(body)
+    children = [bytes(v) for v in parsed.fields.get(mm.BLOB_FIELD, [])
+                if isinstance(v, (bytes, bytearray))]
+    element = children[0] if children else body
+    segment = parse_element(element, ctx, depth=depth)
+    return Message(msg_id=0, ts=ts, sender_uid=uid, sender_uin=None,
+                   sender_name=ctx.display_name(uid, None, ctx.group_id),
+                   is_self=False, segments=[segment])
+
+
+def _reply_segment(child: proto.Parsed, ctx: ParseContext, *,
+                   depth: int) -> Segment:
+    summary = proto.get_text(child, mm.F_REPLY_SUMMARY) or ""
+    quoted: Message | None = None
+    body = proto.get_bytes(child, mm.F_REPLY_BODY)
+    if body is not None and depth < MAX_REPLY_DEPTH:
+        quoted = _quoted_message(
+            body, ctx, depth=depth + 1,
+            uid=proto.get_text(child, mm.F_REPLY_UID),
+            ts=proto.get_int(child, mm.F_REPLY_TS) or 0)
+    return Segment(kind="reply", text=summary, quoted=quoted)
+
+
+def _has_reply_fields(child: proto.Parsed) -> bool:
+    return any(field in child.fields for field in _REPLY_FIELDS)
+
+
+def parse_element(child_bytes: bytes, ctx: ParseContext, *, outer: int = 0,
+                  depth: int = 0) -> Segment:
     child = proto.as_message(child_bytes)
     content_type = proto.get_int(child, mm.F_CONTENT_TYPE) or 0
+
+    if outer == mm.OUTER_FORWARD_NT:
+        return Segment(kind="forward_nt",
+                       forward_meta=_json_meta(proto.get_text(
+                           child, mm.F_FORWARD_NT_JSON) or ""))
+    if outer == mm.OUTER_LEGACY_FORWARD:
+        return Segment(kind="forward_legacy",
+                       forward_previews=_legacy_previews(
+                           proto.get_text(child, mm.F_FORWARD_LEGACY_XML) or ""))
+    if outer == mm.OUTER_POKE:
+        return Segment(kind="poke",
+                       text=proto.get_text(child, mm.F_POKE_TEXT) or "[戳一戳]")
+    if outer == mm.OUTER_CALL:
+        ms = proto.get_int(child, mm.F_CALL_MS) or 0
+        seconds = ms // 1000
+        return Segment(kind="call",
+                       text=f"[通话 {seconds} 秒]" if seconds else "[通话]")
+    if outer == mm.OUTER_REPLY_OR_CARD and _has_reply_fields(child):
+        return _reply_segment(child, ctx, depth=depth)
+
     if content_type == mm.CONTENT_TEXT:
         return Segment(kind="text", text=proto.get_text(child, mm.F_TEXT) or "")
     if content_type == mm.CONTENT_IMAGE:
@@ -85,11 +171,15 @@ def parse_element(child_bytes: bytes, ctx: ParseContext) -> Segment:
     if content_type == mm.CONTENT_MARKDOWN:
         return Segment(kind="markdown", text=proto.get_text(child, mm.F_TEXT) or "")
     if content_type == mm.CONTENT_ARK:
-        return Segment(kind="ark", text="[卡片]")
+        return Segment(kind="ark",
+                       forward_meta=_json_meta(proto.get_text(
+                           child, mm.F_FORWARD_NT_JSON) or ""))
     if content_type == mm.CONTENT_REPLY:
-        return Segment(kind="reply", text=proto.get_text(child, mm.F_REPLY_SUMMARY) or "")
+        return _reply_segment(child, ctx, depth=depth)
     if content_type == mm.CONTENT_LEGACY_FORWARD:
-        return Segment(kind="forward_legacy", text="[转发]")
+        return Segment(kind="forward_legacy",
+                       forward_previews=_legacy_previews(
+                           proto.get_text(child, mm.F_FORWARD_LEGACY_XML) or ""))
     if content_type == mm.CONTENT_LIVE:
         return Segment(kind="live", text="[直播]")
     return Segment(kind="unknown", unknown_field=content_type,
@@ -98,6 +188,8 @@ def parse_element(child_bytes: bytes, ctx: ParseContext) -> Segment:
 
 def parse_message(row: dict[str, object], ctx: ParseContext) -> Message:
     blob = row.get(mm.COL_BLOB)
+    outer = _as_int(row.get(mm.COL_OUTER_TYPE))
+    sub = _as_int(row.get(mm.COL_SUB_TYPE))
     segments: list[Segment] = []
     if isinstance(blob, (bytes, bytearray)):
         raw = bytes(blob)
@@ -106,7 +198,7 @@ def parse_message(row: dict[str, object], ctx: ParseContext) -> Message:
                     if isinstance(v, (bytes, bytearray))]
         for child in children:
             try:
-                segments.append(parse_element(child, ctx))
+                segments.append(parse_element(child, ctx, outer=outer))
             except Exception:            # 单元素失败只降级
                 segments.append(Segment(kind="unknown",
                                         raw_hex=child[:64].hex()))
@@ -129,8 +221,8 @@ def parse_message(row: dict[str, object], ctx: ParseContext) -> Message:
         sender_name=name,
         is_self=is_self,
         segments=segments,
-        outer_type=_as_int(row.get(mm.COL_OUTER_TYPE)),
-        sub_type=_as_int(row.get(mm.COL_SUB_TYPE)),
+        outer_type=outer,
+        sub_type=sub,
     )
 
 

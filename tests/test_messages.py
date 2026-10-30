@@ -122,3 +122,88 @@ def test_media_resolver_is_used_when_provided():
     assert seen["md5"] == md5.hex()
     assert m.segments[0].media is not None
     assert m.segments[0].media.missing is False
+
+# ---- T5：回复 / 转发 / 戳一戳 / 通话 / 卡片 ----
+
+def test_reply_nested_47710_builds_quoted_message():
+    quoted = sp.text_element("原消息")
+    child = sp.element(7, [sp.field_bytes(sp.F_REPLY_BODY, quoted),
+                           sp.field_bytes(sp.F_REPLY_SUMMARY, "原消息".encode()),
+                           sp.field_bytes(sp.F_REPLY_UID, b"u_b")])
+    m = msg.parse_message(row(sp.message(child)), ctx())
+    seg = m.segments[0]
+    assert seg.kind == "reply"
+    assert seg.text == "原消息"
+    assert seg.quoted is not None
+    assert seg.quoted.segments[0].text == "原消息"
+    assert seg.quoted.sender_uid == "u_b"
+
+
+def test_reply_outer5_summary_is_kept():
+    child = sp.element(0, [sp.field_bytes(sp.F_REPLY_SUMMARY, "引用摘要".encode()),
+                           sp.field_bytes(sp.F_REPLY_UID, b"u_b"),
+                           sp.field_varint(sp.F_REPLY_TS, 50)])
+    m = msg.parse_message(row(sp.message(child), outer=5, sub=4), ctx())
+    seg = m.segments[0]
+    assert seg.kind == "reply"
+    assert seg.text == "引用摘要"
+
+
+def test_legacy_forward_previews_and_truncation():
+    xml = ("<msg><dataitem><sourcename>张三</sourcename><datadesc>你好</datadesc></dataitem>"
+           "<dataitem><sourcename>李四</sourcename><datadesc>在吗</datadesc></dataitem></msg>")
+    child = sp.legacy_forward_element(xml)
+    m = msg.parse_message(row(sp.message(child), outer=8), ctx())
+    seg = m.segments[0]
+    assert seg.kind == "forward_legacy"
+    assert seg.forward_previews == [("张三", "你好"), ("李四", "在吗")]
+    long_xml = ("<msg><dataitem><sourcename>A</sourcename><datadesc>"
+                + "长" * 800 + "</datadesc></dataitem></msg>")
+    m2 = msg.parse_message(row(sp.message(sp.legacy_forward_element(long_xml)),
+                               outer=8), ctx())
+    total = sum(len(a) + len(b) for a, b in m2.segments[0].forward_previews)
+    assert total <= 500
+
+
+def test_nt_forward_meta_json():
+    child = sp.forward_nt_element('{"app":"com.tencent.multimsg","count":3}')
+    m = msg.parse_message(row(sp.message(child), outer=11), ctx())
+    seg = m.segments[0]
+    assert seg.kind == "forward_nt"
+    assert seg.forward_meta is not None
+    assert seg.forward_meta["app"] == "com.tencent.multimsg"
+
+
+def test_poke_outer9():
+    child = sp.poke_element("你戳了戳我")
+    m = msg.parse_message(row(sp.message(child), outer=9, sub=33), ctx())
+    seg = m.segments[0]
+    assert seg.kind == "poke"
+    assert seg.text == "你戳了戳我"
+
+
+def test_call_outer19():
+    child = sp.element(0, [sp.field_varint(sp.F_CALL_TYPE, 1),
+                           sp.field_varint(sp.F_CALL_MS, 60000)])
+    m = msg.parse_message(row(sp.message(child), outer=19), ctx())
+    seg = m.segments[0]
+    assert seg.kind == "call"
+    assert "60" in (seg.text or "")
+
+
+def test_ark_card_meta():
+    child = sp.element(10, [sp.field_bytes(sp.F_FORWARD_NT_JSON,
+                                           b'{"app":"com.tencent.structmsg"}')])
+    m = msg.parse_message(row(sp.message(child)), ctx())
+    seg = m.segments[0]
+    assert seg.kind == "ark"
+    assert seg.forward_meta is not None
+
+
+def test_deep_reply_does_not_crash():
+    body = sp.text_element("deep")
+    for _ in range(12):
+        body = sp.element(7, [sp.field_bytes(sp.F_REPLY_BODY, body),
+                              sp.field_bytes(sp.F_REPLY_SUMMARY, b"deep")])
+    m = msg.parse_message(row(sp.message(body)), ctx())
+    assert m.segments[0].kind == "reply"
