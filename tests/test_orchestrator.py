@@ -110,7 +110,7 @@ def test_time_range_and_message_filters(tmp_path):
 
 def test_system_only_c2c_chat_is_hidden(tmp_path):
     normal = sd.text_row(ts=100, text="hi", uid="u_a")
-    system = sd.text_row(ts=200, text="x", uid="u_sys", uin="2909288299",
+    system = sd.text_row(ts=200, text="x", uid="u_sys", uin="987654321",
                          outer=1, sub=0)
     system["40800"] = None
     db = sd.create_msg_db(tmp_path / "nt.db", c2c=[normal, system])
