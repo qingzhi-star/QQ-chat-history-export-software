@@ -16,6 +16,7 @@ class MediaRef:
     duration_ms: int | None = None
     filename: str | None = None
     rel_path: str | None = None
+    md5: str | None = None
 
 
 @dataclass(frozen=True)
