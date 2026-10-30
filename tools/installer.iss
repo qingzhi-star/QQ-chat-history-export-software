@@ -8,7 +8,7 @@ AppId={{8E3D2C7A-5B1E-4A2B-9B8E-2E6F6A1C4D10}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher=qingzhi-star
-DefaultDirName={autopf}\QQExport
+DefaultDirName={localappdata}\Programs\QQExport
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=..\dist\installer
@@ -16,13 +16,13 @@ OutputBaseFilename=QQExport-Setup-{#MyAppVersion}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-PrivilegesRequired=admin
+PrivilegesRequired=lowest
 UninstallDisplayIcon={app}\{#MyAppExeName}
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 
 [Languages]
-Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+Name: "chinesesimp"; MessagesFile: "ChineseSimplified.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加任务:"; Flags: unchecked
