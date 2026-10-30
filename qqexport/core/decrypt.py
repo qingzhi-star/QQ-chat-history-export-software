@@ -108,8 +108,9 @@ def decrypt_pages(src_db: Path, dst_db: Path, params: sc.CipherParams, *,
                   lock_page_no: int = sc.LOCK_PAGE_NO) -> tuple[int, int, bool]:
     """流式解密。返回 (page_count, corrupt_pages, lock_page_shifted)。
 
-    lock_page_no 可注入，使全零锁页分支能在小文件上被测（真值是 262144，
-    对应约 1 GB 的库）。
+    **以页 1 头里的 database size 为准**：真机观测到文件会比逻辑页数大
+    （尾随旧密文/零页，SQLite 本就不会读它们）；若按文件大小解密，这些
+    尾页会全部记为 HMAC 失败，把好库误判成 lossy。
     """
     page_count = 0
     corrupt = 0
@@ -117,10 +118,13 @@ def decrypt_pages(src_db: Path, dst_db: Path, params: sc.CipherParams, *,
     zero_page = b"\x00" * sc.PAGE_SZ
     dst_db = Path(dst_db)
     dst_db.parent.mkdir(parents=True, exist_ok=True)
+    total_pages = max(0, ((Path(src_db).stat().st_size - sc.WRAPPER_SZ
+                           + sc.PAGE_SZ - 1) // sc.PAGE_SZ))
+    limit = total_pages
 
     with open(src_db, "rb") as fin, open(dst_db, "wb") as fout:
         fin.seek(sc.WRAPPER_SZ)
-        while True:
+        while page_count < limit:
             page = fin.read(sc.PAGE_SZ)
             if not page:
                 break
@@ -144,7 +148,38 @@ def decrypt_pages(src_db: Path, dst_db: Path, params: sc.CipherParams, *,
             # 概念；改写成 48 会把 SQLite 的可用页尾从 4016 抬到 4048，整库
             # quick_check 报 «Fragmentation of 32 bytes reported as 0»（R34）。
             fout.write(plain)
+            if page_count == 1:
+                hdr = _header_pages_from_page(plain)
+                if hdr and hdr < limit:
+                    limit = hdr
     return page_count, corrupt, shifted
+
+
+def _header_pages_from_page(plain: bytes) -> int | None:
+    if len(plain) < 32 or not plain.startswith(sc.SQLITE_MAGIC):
+        return None
+    page_size = int.from_bytes(plain[16:18], "big")
+    pages = int.from_bytes(plain[28:32], "big")
+    if page_size != sc.PAGE_SZ or not (0 < pages <= 1 << 30):
+        return None
+    return pages
+
+
+def _truncate_to_header(db_path: Path) -> int | None:
+    """把产物截断到页 1 头声明的页数；返回该页数（无法判断时 None）。"""
+    try:
+        with open(db_path, "r+b") as f:
+            page1 = f.read(sc.PAGE_SZ)
+            hdr = _header_pages_from_page(page1)
+            if hdr is None:
+                return None
+            want = hdr * sc.PAGE_SZ
+            size = Path(db_path).stat().st_size
+            if want < size:
+                f.truncate(want)
+            return hdr
+    except OSError:
+        return None
 
 
 def _page1_has_magic(db_path: Path) -> bool:
@@ -205,6 +240,9 @@ def decrypt_file(src_db: Path, passphrase: bytes, dst_db: Path, *,
             res.warnings.append(f"{corrupt} 个页损坏（HMAC 校验失败），已写零页占位")
 
         wal_invalid = _recover_wal(res, params, partial, wal_path, shm_path)
+        hdr_pages = _truncate_to_header(partial)
+        if hdr_pages is not None:
+            res.page_count = hdr_pages
 
         res.integrity_check, res.tables = integrity_probe(partial)
         if res.integrity_check != "ok":
