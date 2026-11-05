@@ -23,7 +23,7 @@ import sys
 import warnings
 from pathlib import Path
 
-from . import __version__, config, doctor, report
+from . import __version__, config, doctor, report, selection
 from .core import discover, keyscan, keystore, sqlcipher
 from .export import orchestrator, session
 
@@ -45,6 +45,23 @@ def _add_account_args(p: argparse.ArgumentParser) -> None:
                    help="手动指定 'Tencent Files' 目录")
     p.add_argument("--uin", default=None,
                    help="目标 QQ 号（发现多个账号时必须显式指定）")
+
+
+def _parse_formats(text: str) -> str:
+    formats = [f.strip().lower() for f in text.split(",")]
+    if any(f not in {"txt", "html", "pdf"} for f in formats):
+        raise argparse.ArgumentTypeError("格式应为 txt/html/pdf，多个用逗号分隔")
+    return ",".join(formats)
+
+
+def _parse_date(text: str, *, end: bool = False) -> int:
+    try:
+        ts = selection.day_timestamp(text, end=end)
+        if ts is None:
+            raise ValueError("日期不能为空")
+        return ts
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -91,14 +108,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     exp = sub.add_parser("export", help="导出会话为 txt/html/pdf")
     _add_account_args(exp)
-    exp.add_argument("--chat", action="append", default=[],
-                     help="会话 ID（可重复），如 c2c:u_xxx / group:123")
-    exp.add_argument("--all", action="store_true", help="导出全部会话")
-    exp.add_argument("--format", default="html", choices=["txt", "html", "pdf"],
-                     help="单格式：txt / html / pdf（默认 html）")
+    target = exp.add_mutually_exclusive_group(required=True)
+    target.add_argument("--chat", action="append", default=[],
+                        help="会话 ID（可重复），如 c2c:u_xxx / group:123")
+    target.add_argument("--all", action="store_true", help="导出全部会话")
+    exp.add_argument("--format", default="html", type=_parse_formats,
+                     help="txt / html / pdf，多个用逗号分隔（默认 html）")
+    exp.add_argument("--start", type=_parse_date, default=None,
+                     help="开始日期 YYYY-MM-DD（含本地当天，不指定则不限）")
+    exp.add_argument("--end", type=lambda s: _parse_date(s, end=True), default=None,
+                     help="结束日期 YYYY-MM-DD（含本地当天，不指定则不限）")
+    exp.add_argument("--message-id", type=int, action="append", default=None,
+                     help="消息 ID（可重复，仅限一个 --chat；与日期范围取交集）")
     exp.add_argument("--out", type=Path, default=Path("."),
                      help="导出位置（会在其下创建 QQ聊天记录导出）")
-    exp.add_argument("--encoding", default="utf-8", help="txt 编码：utf-8 / gbk")
+    exp.add_argument("--encoding", default="utf-8", choices=["utf-8", "gbk"],
+                     help="txt 编码：utf-8 / gbk")
     exp.add_argument("--allow-large-pdf", action="store_true",
                      help="允许 >30000 条消息生成 PDF")
 
@@ -278,38 +303,53 @@ def _cmd_list(args) -> int:
 
 
 def _cmd_export(args) -> int:
-    if args.all and args.chat:
-        print("错误：--all 与 --chat 不能同时使用。", file=sys.stderr)
-        return EXIT_FAIL
-    formats = {f.strip().lower() for f in args.format.split(",") if f.strip()}
-    if len(formats) != 1 or formats - {"txt", "html", "pdf"}:
-        print("错误：--format 只能选一个：txt / html / pdf。", file=sys.stderr)
-        return EXIT_FAIL
+    formats = set(args.format.split(","))
     source = _open_source(args)
     if source is None:
         return EXIT_FAIL
     try:
-        chat_ids = [c.chat_id for c in source.chats()] if args.all else list(args.chat)
+        chat_ids = ([c.chat_id for c in source.chats()] if args.all
+                    else list(dict.fromkeys(args.chat)))
         if not chat_ids:
-            print("错误：请用 --chat 指定会话，或用 --all。", file=sys.stderr)
+            print("错误：没有可导出的会话。", file=sys.stderr)
             return EXIT_FAIL
         rep = orchestrator.export_chats(
             source, chat_ids, orchestrator.ExportOptions(
-                format=formats.pop(), out_base=args.out,
+                formats=formats, out_base=args.out,
                 encoding=args.encoding, allow_large_pdf=args.allow_large_pdf,
+                start_ts=args.start, end_ts=args.end,
+                message_ids=(set(args.message_id)
+                             if args.message_id is not None else None),
                 ))
         print(rep.to_text())
         for d in rep.exported_dirs:
             print(f"已导出：{d}")
-        return EXIT_OK if rep.chats_exported else EXIT_FAIL
+        return (EXIT_OK if rep.chats_exported == len(chat_ids) and not rep.pdf_error
+                else EXIT_FAIL)
+    except Exception as exc:
+        print(f"错误：导出失败（{type(exc).__name__}）", file=sys.stderr)
+        return EXIT_FAIL
     finally:
         source.close()
 
 
 def main(argv: list[str] | None = None) -> int:
     _force_utf8_stdio()
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.command == "export":
+        if args.start is not None and args.end is not None and args.start > args.end:
+            parser.error("开始日期不能晚于结束日期")
+        if args.message_id is not None and (args.all or len(set(args.chat)) != 1):
+            parser.error("--message-id 仅可与一个 --chat 会话一起使用")
+    try:
+        return _dispatch(args)
+    except config.ConfigError as exc:
+        print(f"错误：{exc}", file=sys.stderr)
+        return EXIT_FAIL
 
+
+def _dispatch(args) -> int:
     if args.command == "version":
         print(f"qqexport {__version__}")
         return EXIT_OK

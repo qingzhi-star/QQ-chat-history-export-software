@@ -6,10 +6,15 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 APP_DIR_NAME = "QQExport"
+
+
+class ConfigError(RuntimeError):
+    """配置不可读或损坏；消息不得包含配置内容或用户路径。"""
 
 
 def app_dir() -> Path:
@@ -41,24 +46,49 @@ class Config:
     cache_key: bool = True
     decode_voice: bool = False
 
+    def _validate(self) -> None:
+        if (any(v is not None and not isinstance(v, str)
+                for v in (self.data_dir, self.uin))
+                or type(self.cache_key) is not bool
+                or type(self.decode_voice) is not bool):
+            raise ConfigError("config.json 字段类型错误，原文件未修改；请备份后修复配置。")
+
     @classmethod
     def load(cls, path: Path | None = None) -> "Config":
         p = Path(path) if path is not None else config_path()
-        if not p.is_file():
-            return cls()
         try:
             raw = json.loads(p.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except FileNotFoundError:
             return cls()
+        except (ValueError, UnicodeError):
+            raise ConfigError("config.json 已损坏，原文件未修改；请备份后修复配置。") from None
+        except OSError:
+            raise ConfigError("无法读取 config.json，原文件未修改；请检查访问权限。") from None
         if not isinstance(raw, dict):
-            return cls()
+            raise ConfigError("config.json 应为 JSON 对象，原文件未修改；请备份后修复配置。")
         known = set(cls.__dataclass_fields__)
-        return cls(**{k: v for k, v in raw.items() if k in known})
+        result = cls(**{k: v for k, v in raw.items() if k in known})
+        result._validate()
+        return result
 
     def save(self, path: Path | None = None) -> None:
         p = Path(path) if path is not None else config_path()
-        p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_name(p.name + ".tmp")
-        tmp.write_text(json.dumps(asdict(self), ensure_ascii=False, indent=2),
-                       encoding="utf-8")
-        tmp.replace(p)
+        self._validate()
+        # 不允许用默认配置静默覆盖损坏的旧文件。
+        self.load(p)
+        tmp: Path | None = None
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                    mode="w", encoding="utf-8", dir=p.parent,
+                    prefix=p.name + ".", suffix=".tmp", delete=False) as stream:
+                tmp = Path(stream.name)
+                json.dump(asdict(self), stream, ensure_ascii=False, indent=2)
+                stream.flush()
+                os.fsync(stream.fileno())
+            tmp.replace(p)
+        except OSError:
+            raise ConfigError("无法写入 config.json，原文件未修改；请检查访问权限和磁盘空间。") from None
+        finally:
+            if tmp is not None:
+                tmp.unlink(missing_ok=True)

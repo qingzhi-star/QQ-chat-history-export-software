@@ -2,6 +2,22 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from datetime import datetime, time
+
+
+def day_timestamp(text: str, *, end: bool = False) -> int | None:
+    """本地日期的包含式日界；GUI 与 CLI 共用，不指定时不限制。"""
+    text = text.strip()
+    if not text:
+        return None
+    try:
+        day = datetime.strptime(text, "%Y-%m-%d").date()
+        if day.isoformat() != text:
+            raise ValueError
+        bound = datetime.combine(day, time(23, 59, 59) if end else time.min)
+        return int(bound.timestamp())
+    except (ValueError, OverflowError, OSError):
+        raise ValueError("日期应为有效的本地日期 YYYY-MM-DD") from None
 
 
 def indices_in_range(messages: Iterable, start: int | None,

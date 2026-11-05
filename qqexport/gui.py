@@ -11,7 +11,7 @@ import re
 import threading
 import traceback
 import tkinter as tk
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -31,17 +31,7 @@ from qqexport.qq import avatars
 
 
 def _parse_day(text: str, *, end: bool) -> int | None:
-    text = text.strip()
-    if not text:
-        return None
-    try:
-        day = datetime.strptime(text, "%Y-%m-%d")
-    except ValueError:
-        raise ValueError(f"日期格式应为 YYYY-MM-DD：{text}")
-    if end:
-        day = day + timedelta(days=1)
-        return int(day.timestamp()) - 1
-    return int(day.timestamp())
+    return selection.day_timestamp(text, end=end)
 
 
 class App:
@@ -1411,10 +1401,8 @@ class DateRangeDialog(tk.Toplevel):
         self._build()
 
     def _ok(self) -> None:
-        start = (int(datetime.combine(self.start, datetime.min.time()).timestamp())
-                 if self.start else None)
-        end = (int(datetime.combine(self.end, datetime.max.time()).timestamp())
-               if self.end else None)
+        start = selection.day_timestamp(self.start.isoformat() if self.start else "")
+        end = selection.day_timestamp(self.end.isoformat() if self.end else "", end=True)
         self.destroy()
         self.on_ok(start, end)
 

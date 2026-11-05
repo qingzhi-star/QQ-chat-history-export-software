@@ -104,6 +104,29 @@ python -m pip install -e ".[dev]"
 python -m qqexport gui
 ```
 
+### 命令行导出
+
+先用 `python -m qqexport list` 查看会话 ID。默认导出 HTML；`--format` 可用逗号
+同时指定多个格式，输出目录结构与 GUI 相同：
+
+```powershell
+python -m qqexport export --chat c2c:u_example --format txt,html,pdf --out "D:/backup"
+python -m qqexport export --chat c2c:u_example --format txt,html --start 2026-11-01 --end 2026-11-05
+python -m qqexport export --chat c2c:u_example --format txt --message-id 1 --message-id 3
+```
+
+- `--start` / `--end` 使用本机时区，包含开始日 00:00:00 至结束日 23:59:59；
+  可只指定一端，不指定则不限。
+- `--message-id` 可重复，使用数据库的消息 ID（非预览行号）；与日期范围取交集，
+  按原消息顺序导出。为避免不同会话的 ID 重叠，只能用于单个 `--chat`。
+- `--chat` 可重复；也可用 `--all` 导出全部会话，两者互斥。
+- 空筛选沿用导出管线行为，生成空聊天文件；默认格式仍为 HTML。
+- TXT 可用 `--encoding gbk`，默认 UTF-8。退出码：`0` 全部成功，`1` 操作失败
+  （包括部分会话失败或 PDF 失败，其他成功格式会保留），`2` 参数错误。
+
+旧版 `config.json` 的缺省字段使用默认值，未知字段忽略；损坏或字段类型错误时
+明确报错并保留原文件，请先备份后修复。配置保存使用同目录临时文件原子替换。
+
 运行测试：
 
 ```powershell

@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from datetime import datetime
+
+import pytest
 
 from qqexport import selection
 
@@ -28,3 +31,19 @@ def test_toggle_and_all():
     chosen.update(selection.all_indices(3))
     assert selection.is_all(chosen, 3)
     assert not selection.is_all(set(), 3)
+
+
+def test_local_day_bounds_and_unlimited():
+    start = selection.day_timestamp("2026-11-05")
+    end = selection.day_timestamp("2026-11-05", end=True)
+    assert datetime.fromtimestamp(start) == datetime(2026, 11, 5, 0, 0, 0)
+    assert datetime.fromtimestamp(end) == datetime(2026, 11, 5, 23, 59, 59)
+    assert selection.day_timestamp("2024-02-29") is not None
+    assert selection.day_timestamp("") is None
+    assert selection.day_timestamp(" ", end=True) is None
+
+
+@pytest.mark.parametrize("text", ["2026-02-29", "2026-11-31", "2026-1-1", "bad"])
+def test_invalid_day_is_rejected(text):
+    with pytest.raises(ValueError, match="YYYY-MM-DD"):
+        selection.day_timestamp(text)
