@@ -10,10 +10,9 @@ import base64
 import mimetypes
 import os
 import re
-import urllib.request
-import re
 import shutil
 import time
+import urllib.request
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
@@ -182,6 +181,41 @@ def _inline_images(messages: list[Message]) -> list[Message]:
     return out
 
 
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED
+        if handle:
+            kernel32.CloseHandle(handle)
+            return True
+        return False
+    except Exception:
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+
+
+def _cleanup_stale(root: Path) -> None:
+    """删除崩溃遗留的临时/备份目录；仍存活进程的目录保留。"""
+    for path in root.iterdir():
+        if not path.is_dir():
+            continue
+        match = re.match(r"^\.tmp-(\d+)-", path.name)
+        if match is None:
+            match = re.search(r"\.old-(\d+)-\d+$", path.name)
+        if match is None:
+            continue
+        pid = int(match.group(1))
+        if _pid_alive(pid):
+            continue
+        shutil.rmtree(path, ignore_errors=True)
+
+
 def _commit_dir(work: Path, final: Path) -> None:
     """把已完成的临时目录原子换到目标位置；失败时恢复旧目录。"""
     backup: Path | None = None
@@ -207,6 +241,7 @@ def export_chats(source: ExportSource, chat_ids: list[str],
     now = opts.now or datetime.now()
     root = opts.out_base / ROOT_FOLDER
     root.mkdir(parents=True, exist_ok=True)
+    _cleanup_stale(root)
 
     infos = {i.chat_id: i for i in source.chats()}
     report = ExportReport(

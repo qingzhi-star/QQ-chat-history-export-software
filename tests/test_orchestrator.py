@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+import shutil
 
 from qqexport.export import orchestrator
 from qqexport.export.session import ExportSource
@@ -160,6 +161,53 @@ def test_successful_reexport_replaces_old_folder(tmp_path):
     assert (folder / "chat.txt").is_file()
     root = out / orchestrator.ROOT_FOLDER
     assert not [p for p in root.iterdir() if ".old-" in p.name]
+
+
+def test_all_formats_share_same_selected_snapshot(tmp_path, monkeypatch):
+    src = make_source(tmp_path)
+    out = tmp_path / "out"
+    captured = {}
+
+    def fake_pdf(html_path, out_pdf, **kw):
+        captured["html"] = Path(html_path).read_text(encoding="utf-8")
+        out_pdf.write_bytes(b"%PDF-1.4 fake")
+        from qqexport.export.pdf import PdfResult
+        return PdfResult(out_pdf)
+
+    monkeypatch.setattr(orchestrator.pdf_mod, "write_pdf", fake_pdf)
+    rep = orchestrator.export_chats(
+        src, ["c2c:u_a"], orchestrator.ExportOptions(
+            formats={"txt", "html", "pdf"}, out_base=out, now=NOW,
+            message_ids={1}))
+    folder = out / orchestrator.ROOT_FOLDER / "昵称A-987654321"
+    assert {p.name for p in folder.iterdir()} == {
+        "chat.txt", "chat.pdf", "chat.html"}
+    text = (folder / "chat.txt").read_text(encoding="utf-8-sig")
+    html = (folder / "chat.html").read_text(encoding="utf-8")
+    assert "你好" in text and "你好" in captured["html"]
+    assert "看图" not in text and "看图" not in captured["html"]
+    assert "昵称A" in text and "昵称A" in captured["html"]
+    assert rep.chats_exported == 1 and rep.messages_total == 1
+
+
+def test_stale_temp_and_backup_dirs_are_cleaned(tmp_path):
+    src = make_source(tmp_path)
+    out = tmp_path / "out"
+    root = out / orchestrator.ROOT_FOLDER
+    root.mkdir(parents=True)
+    dead_tmp = root / ".tmp-99999999-1"
+    dead_old = root / "旧目录.old-99999999-1"
+    live_tmp = root / f".tmp-{__import__('os').getpid()}-1"
+    for path in (dead_tmp, dead_old, live_tmp):
+        path.mkdir()
+        (path / "marker").write_text("x", encoding="utf-8")
+    orchestrator.export_chats(
+        src, ["c2c:u_a"], orchestrator.ExportOptions(
+            format="txt", out_base=out, now=NOW))
+    assert not dead_tmp.exists()
+    assert not dead_old.exists()
+    assert live_tmp.exists()
+    shutil.rmtree(live_tmp, ignore_errors=True)
 
 
 def test_system_only_c2c_chat_is_hidden(tmp_path):
