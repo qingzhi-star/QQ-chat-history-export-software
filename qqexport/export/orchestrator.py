@@ -216,17 +216,29 @@ def _cleanup_stale(root: Path) -> None:
         shutil.rmtree(path, ignore_errors=True)
 
 
+def _rename_dir(source: Path, target: Path) -> None:
+    # Defender/索引器可能短暂持有刚生成的文件；只重试 Windows 的共享/访问锁。
+    for attempt in range(6):
+        try:
+            source.rename(target)
+            return
+        except PermissionError as exc:
+            if getattr(exc, "winerror", None) not in {5, 32, 33} or attempt == 5:
+                raise
+            time.sleep(0.05 * (attempt + 1))
+
+
 def _commit_dir(work: Path, final: Path) -> None:
     """把已完成的临时目录原子换到目标位置；失败时恢复旧目录。"""
     backup: Path | None = None
     if final.exists():
         backup = final.with_name(f"{final.name}.old-{os.getpid()}-{time.time_ns()}")
-        final.rename(backup)
+        _rename_dir(final, backup)
     try:
-        work.rename(final)
+        _rename_dir(work, final)
     except BaseException:
         if backup is not None and not final.exists():
-            backup.rename(final)
+            _rename_dir(backup, final)
         raise
     if backup is not None:
         shutil.rmtree(backup, ignore_errors=True)

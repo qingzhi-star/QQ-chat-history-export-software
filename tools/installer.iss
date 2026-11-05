@@ -1,5 +1,12 @@
 ; QQ聊天记录导出 - Inno Setup 6
 #define MyAppName "QQ聊天记录导出"
+#ifdef SmokeBuild
+  #undef MyAppName
+  #define MyAppName "QQExport Smoke Test"
+  #define MyAppId "QQExportSmokeTests"
+#else
+  #define MyAppId "{{8E3D2C7A-5B1E-4A2B-9B8E-2E6F6A1C4D10}"
+#endif
 #ifndef MyAppVersion
   #error MyAppVersion must be supplied by tools/build_release.py
 #endif
@@ -9,7 +16,7 @@
 #define MyAppExeName "QQExport.exe"
 
 [Setup]
-AppId={{8E3D2C7A-5B1E-4A2B-9B8E-2E6F6A1C4D10}
+AppId={#MyAppId}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher=qingzhi-star

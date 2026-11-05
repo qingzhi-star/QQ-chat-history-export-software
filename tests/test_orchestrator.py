@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 import shutil
+import pytest
 
 from qqexport.export import orchestrator
 from qqexport.export.session import ExportSource
@@ -11,6 +12,49 @@ from qqexport.qq import contacts, media
 from tests.helpers import synth_db as sd
 
 NOW = datetime(2026, 10, 30, 12, 0, 0)
+
+
+def test_commit_retries_transient_windows_lock(tmp_path, monkeypatch):
+    source, target = tmp_path / "source", tmp_path / "target"
+    source.mkdir()
+    (source / "complete.txt").write_text("complete", encoding="utf-8")
+    original = Path.rename
+    calls = []
+
+    def rename(path, destination):
+        calls.append(path)
+        if len(calls) == 1:
+            exc = PermissionError("synthetic sharing violation")
+            exc.winerror = 32
+            raise exc
+        return original(path, destination)
+
+    monkeypatch.setattr(Path, "rename", rename)
+    monkeypatch.setattr(orchestrator.time, "sleep", lambda seconds: None)
+    orchestrator._commit_dir(source, target)
+    assert (target / "complete.txt").read_text(encoding="utf-8") == "complete"
+    assert len(calls) == 2
+
+
+def test_commit_permanent_failure_remains_atomic(tmp_path, monkeypatch):
+    source, target = tmp_path / "source", tmp_path / "target"
+    source.mkdir()
+    target.mkdir()
+    (target / "old.txt").write_text("old", encoding="utf-8")
+    original = Path.rename
+
+    def rename(path, destination):
+        if path == source:
+            exc = PermissionError("synthetic permanent lock")
+            exc.winerror = 5
+            raise exc
+        return original(path, destination)
+
+    monkeypatch.setattr(Path, "rename", rename)
+    monkeypatch.setattr(orchestrator.time, "sleep", lambda seconds: None)
+    with pytest.raises(PermissionError):
+        orchestrator._commit_dir(source, target)
+    assert (target / "old.txt").read_text(encoding="utf-8") == "old"
 
 
 def make_source(tmp_path):

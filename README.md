@@ -171,6 +171,16 @@ python tools/build_release.py --out dist/release-second --compare dist/release/b
 同步 README；运行时版本、安装包、EXE 文件版本及清单标题均从同一来源生成。
 手动传给 Inno Setup 的版本不再有默认值，避免误用旧版本。
 
+构建后执行自动冒烟：
+
+```powershell
+python tools/smoke_release.py dist/release --report build/smoke-report.json
+```
+
+测试使用合成启动入口，不发现 QQ 账号；验证中文/空格路径、缺少 `_internal` 的提示，
+并以独立测试 AppId/快捷方式完成安装、启动和卸载，不覆盖现有安装。
+版本更新与标签规则见 [VERSIONING](docs/VERSIONING.md)。
+
 ## 常见问题
 
 ### 提示“没有缓存口令”

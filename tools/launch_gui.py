@@ -52,4 +52,7 @@ _prepare_tcl()
 from qqexport.gui import run_gui  # noqa: E402
 
 if __name__ == "__main__":
+    if len(sys.argv) == 3 and sys.argv[1] == "--smoke-test":
+        from qqexport.smoke import run_smoke
+        raise SystemExit(run_smoke(Path(sys.argv[2])))
     raise SystemExit(run_gui())
