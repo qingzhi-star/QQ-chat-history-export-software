@@ -1,6 +1,11 @@
 ; QQ聊天记录导出 - Inno Setup 6
 #define MyAppName "QQ聊天记录导出"
-#define MyAppVersion "0.1.0"
+#ifndef MyAppVersion
+  #error MyAppVersion must be supplied by tools/build_release.py
+#endif
+#ifndef SourceDir
+  #define SourceDir "..\dist\QQExport"
+#endif
 #define MyAppExeName "QQExport.exe"
 
 [Setup]
@@ -28,7 +33,7 @@ Name: "chinesesimp"; MessagesFile: "ChineseSimplified.isl"
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加任务:"; Flags: unchecked
 
 [Files]
-Source: "..\dist\QQExport\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

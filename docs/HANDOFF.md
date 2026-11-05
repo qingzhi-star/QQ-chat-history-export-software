@@ -4,9 +4,9 @@
 **最后更新：** 2026-11-06  
 **当前分支：** `main`  
 **当前预发布：** `v0.1.0-pre.2`  
-**当前基线：** P1 已完成；P1+ 的 T01–T07 已完成；T08–T10 待做；P2 待启动。
-**验证基线：** T07 本地 Python 3.14 普通测试 `543 passed, 10 deselected`；隐私巡检通过；
-此前 Windows CI（Python 3.12/3.13/3.14）测试通过，T07 的 CI 尚未验证。
+**当前基线：** P1 已完成；P1+ 的 T01–T08 已完成；T09–T10 待做；P2 待启动。
+**验证基线：** T08 本地 Python 3.14 普通测试 `553 passed, 10 deselected`；隐私巡检通过；
+Windows x64 / Python 3.14.6 两次构建的 1022 个文件结构与内容哈希一致；本轮 CI 尚未验证。
 
 > 本文档是当前唯一入口。P0/P1 的历史交接、裁定与踩坑记录已归档到
 > [`HANDOFF-p0-p1-archive.md`](HANDOFF-p0-p1-archive.md)，只在追溯历史时阅读。
@@ -47,12 +47,12 @@ Windows 桌面工具：读取**本机已登录 QQ NT 账号**的本地数据库�
 | P1+ T05 | 多选纯模型与边界测试 | ✅ |
 | P1+ T06 | 导出基准、表列缓存优化 | ✅ |
 | P1+ T07 | CLI 多格式、日期范围、消息 ID 选择；配置兼容与原子写入 | ✅ |
+| P1+ T08 | 固定工具链/依赖哈希、版本单一来源、构建脚本与清单 | ✅ |
 
 ### 2.2 待做
 
 | 任务 | 内容 |
 |---|---|
-| P1P-T08 | 可复现构建、版本单一来源 |
 | P1P-T09 | 安装包/绿色版自动冒烟 |
 | P1P-T10 | 文档、Release 检查清单、验收收尾 |
 | P2 | 搜索、批量/增量导出、归档、媒体缓存、虚拟化列表 |
@@ -124,6 +124,10 @@ tools/
   installer.iss           Inno Setup 安装脚本
   bench_export.py         合成导出基准
   check_privacy.py        提交/全库隐私巡检
+  build_release.py        隔离构建、同源版本、ZIP/安装包与哈希清单
+requirements-build.lock   Windows x64 / Python 3.14.6 的完整构建依赖哈希锁
+.python-version           固定构建 Python 版本（源码运行仍支持 >=3.12）
+build-toolchain.json       平台与 Inno Setup 6.7.3 编译器哈希
 tests/                    合成测试；live marker 默认排除
 docs/                     任务书、兼容矩阵、性能基线、本交接
 ```
@@ -167,25 +171,32 @@ python tools/check_privacy.py --audit
 
 ### 5.3 打包
 
-绿色版：
+安装包与绿色版（Windows x64 / Python 3.14.6，Inno Setup 6.7.3）：
 
 ```powershell
-python -m PyInstaller --noconfirm --clean --windowed --onedir `
-  --name QQExport --distpath dist --workpath build/pyinstaller --specpath build `
-  --hidden-import PIL._tkinter_finder --collect-submodules qqexport `
-  tools/launch_gui.py
+python tools/build_release.py --out dist/release
 ```
 
-安装包：
+只构建绿色版加 `--portable-only`；编译器路径可用 `--iscc` 指定；
+离线依赖可用 `--wheelhouse` 指定。输出目录必须不存在，构建失败不覆盖旧产物。
+工具环境在系统临时目录创建并清理，防止本机 Python 的含空格 venv 启动问题；
+日志留在 `build/release-build.log`（仅本机，不入库）。
+
+重复构建验证：
 
 ```powershell
-& "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" tools\installer.iss
+python tools/build_release.py --out dist/release-second --compare dist/release/build-manifest.json
 ```
 
 产物：
 
-- `dist/QQExport/`（`QQExport.exe` + `_internal`，必须整体分发）
-- `dist/installer/QQExport-Setup-*.exe`
+- `dist/release/QQExport/`（`QQExport.exe` + `_internal`，必须整体分发）
+- `dist/release/QQExport-portable-<版本>.zip`
+- `dist/release/QQExport-Setup-<版本>.exe`
+- `dist/release/build-manifest.json`、`SHA256SUMS`（本地构建证据，不自动发布为资产）
+
+版本只修改 `pyproject.toml`，随后运行 `python tools/build_release.py --sync-version`；
+README、运行时、EXE 文件版本、安装脚本和清单标题从同一版本生成。
 
 ### 5.4 性能基准
 
@@ -254,6 +265,24 @@ python tools/bench_export.py --messages 10000 --formats txt
   未启动真实 Edge；GUI 快速切会话/多选/图片/实时追加未做真机复测；T07 的
   Python 3.12/3.13 和 CI 未运行；未重新构建或发布预发布资产。
 
+### 6.7 可复现构建与同源版本（P1P-T08，2026-11-06）
+
+- 固定 Python 3.14.6 / Windows x64；20 个直接及传递依赖均有精确版本和 wheel
+  SHA-256，`pip --require-hashes` 安装到独立临时 venv；不使用系统额外包。
+- Inno Setup 固定 6.7.3，并校验编译器及核心 DLL 哈希；拒绝错误工具链。
+- `pyproject.toml` 是版本单一来源：源码直接读取，wheel/冻结程序读取同源
+  METADATA，README 自动同步；安装包与 PE 版本由构建脚本注入，无安装脚本旧值兜底。
+- 输出先在同卷暂存，成功后整体发布；已有目录拒绝覆盖。ZIP 排序、时间戳固定，
+  清单含源码/依赖/工具链指纹及文件/资产哈希；剔除 pip 本机安装路径信息。
+- **验证：** 完整普通测试 `553 passed, 10 deselected`；默认与全库隐私巡检通过。
+  两轮从同一源码快照创建全新 venv，实际生成绿色版和安装包，1022 个文件的路径、
+  大小及 SHA-256 均一致；EXE 的 FileVersion/ProductVersion 均为 `0.1.0`。
+- **复现范围：** 门槛为相同构建输入的目录结构一致。本机两轮额外达到了 bundle
+  内容一致，不据此承诺跨机器或安装包/压缩包始终逐字节一致。
+- **未验证：** 本轮未进行安装/卸载或运行 exe 的冒烟（交给 T09）；未运行 live、
+  真实 Edge PDF 或 GUI 交互回归；Python 3.12/3.13 的新增普通测试与本轮 CI
+  尚未运行；未改动现有预发布或上传新资产。
+
 ---
 
 ## 7. 安全与隐私红线
@@ -302,7 +331,7 @@ python tools/bench_export.py --messages 10000 --formats txt
 
 1. 先读本文件 §2–§4，再读 P1+ 任务书。
 2. 不修改已定稿界面布局；只修缺陷或按 P2 评审后的方案演进。
-3. 从 P1P-T08（可复现构建）继续，优先完成发布门槛。
+3. 从 P1P-T09（安装/绿色版自动冒烟）继续，优先完成发布门槛。
 4. 任何导出改动先跑 `tests/test_orchestrator.py`，确认原子替换与旧产物保留。
 5. 任何 GUI 改动先验证：快速切会话、进入/退出多选、图片、实时追加。
 6. P2 的虚拟化/搜索会触及隐私面，先写数据与索引生命周期，再写 UI。
@@ -311,13 +340,13 @@ python tools/bench_export.py --messages 10000 --formats txt
 
 ## 11. 交接检查清单
 
-- [x] T01–T07 代码已提交并推送 `main`
-- [x] 普通测试通过（T07：543）
+- [x] T01–T08 代码已提交并推送 `main`
+- [x] 普通测试通过（T08：553）
 - [x] 隐私巡检通过
 - [x] 预发布资产可用
 - [x] 界面定稿
 - [x] P1P-T07 CLI 对齐
-- [ ] P1P-T08 可复现构建
+- [x] P1P-T08 可复现构建
 - [ ] P1P-T09 安装/绿色版自动冒烟
 - [ ] P1P-T10 发布验收
 - [ ] P2 启动

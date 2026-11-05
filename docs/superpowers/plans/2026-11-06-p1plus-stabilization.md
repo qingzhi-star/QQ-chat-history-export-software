@@ -188,6 +188,20 @@ P1+ 不追求增加新的大功能，目标是把现有“能用”的产品做�
 - **未验证：** live、真实 Edge PDF、GUI 交互真机回归、Python 3.12/3.13 与本轮
   CI、安装包/绿色版构建未执行。本轮细节与后续入口见 `docs/HANDOFF.md` §6.6。
 
+### P1P-T08 完成记录（2026-11-06）
+
+- **F26：** `.python-version` 固定 Python 3.14.6；`requirements-build.lock` 锁定
+  全部 20 个依赖及哈希；`build-toolchain.json` 固定 Windows x64 与 Inno Setup
+  6.7.3 编译器哈希。`tools/build_release.py` 创建全新隔离环境、校验 wheel、
+  构建 onedir/ZIP/安装包，并生成 SHA256SUMS、包含源码指纹的文件清单和比较结果。
+- **F29：** `pyproject.toml` 单一版本来源，运行时/METADATA/README/PE 版本/
+  安装包名称/清单标题同步；Release 的实际标题与上传流程留待 T10。
+- **测试与隐私：** 普通测试 `553 passed, 10 deselected`；隐私扫描与全库巡检
+  通过；两次全新 venv 实构建的 bundle 1022 个文件结构和内容哈希一致，EXE 的
+  文件及产品版本为 `0.1.0`。可复现承诺限定为目录结构一致，不承诺跨机二进制一致。
+- **未验证：** 本轮 CI / Python 3.12、3.13、live、真实 Edge PDF、GUI 交互
+  未运行；安装/卸载/绿色版运行自动冒烟属 T09；没有发布新 Release 资产。
+
 ---
 
 ## 7. 验收门

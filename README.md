@@ -1,5 +1,9 @@
 # QQ 聊天记录导出
 
+<!-- version:start -->
+当前源码版本：**0.1.0**。
+<!-- version:end -->
+
 在 Windows 上导出**本机已登录 QQ NT 账号**的聊天记录，支持 TXT、PDF、HTML，
 并可在导出前按日期或逐条勾选消息。
 
@@ -141,28 +145,31 @@ python -m pytest -m live -v -s
 
 ## 从源码构建可执行文件
 
-### 绿色版（PyInstaller）
+构建固定使用 Windows x64、`.python-version` 指定的 Python，以及
+`build-toolchain.json` 指定的 Inno Setup 6.7.3。Python 依赖及其 SHA-256
+完整锁定在 `requirements-build.lock`，构建会创建隔离环境，不使用系统中额外的包。
 
 ```powershell
-python -m pip install pyinstaller
-python -m PyInstaller --noconfirm --clean --windowed --onedir `
-  --name QQExport --distpath dist --workpath build/pyinstaller --specpath build `
-  --hidden-import PIL._tkinter_finder --collect-submodules qqexport `
-  tools/launch_gui.py
+python tools/build_release.py --out dist/release
 ```
 
-生成的 `dist/QQExport/` 即绿色版目录。分发时必须把 `QQExport.exe` 与
-`_internal` 一起打包。
+默认从当前用户的 `Programs/Inno Setup 6/ISCC.exe` 查找编译器，也可用 `--iscc`
+指定；编译器哈希必须匹配。只构建绿色版可加 `--portable-only`。
+输出目录须不存在，失败不覆盖旧产物；构建日志在 `build/release-build.log`。
 
-### 安装包（Inno Setup 6）
+产物：`QQExport/`、`QQExport-portable-<版本>.zip`、`QQExport-Setup-<版本>.exe`，
+以及 `build-manifest.json` 与 `SHA256SUMS`。清单记录源码指纹、工具链与依赖指纹、
+各文件和分发资产的哈希，不包含本机绝对路径。绿色版必须整体分发。
 
-安装 [Inno Setup 6](https://jrsoftware.org/isinfo.php) 后执行：
+验证重复构建（保证相同输入的目录结构一致，不承诺所有二进制逐字节一致）：
 
 ```powershell
-& "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" tools\installer.iss
+python tools/build_release.py --out dist/release-second --compare dist/release/build-manifest.json
 ```
 
-安装包输出到 `dist/installer/`。
+版本只在 `pyproject.toml` 修改，然后运行 `python tools/build_release.py --sync-version`
+同步 README；运行时版本、安装包、EXE 文件版本及清单标题均从同一来源生成。
+手动传给 Inno Setup 的版本不再有默认值，避免误用旧版本。
 
 ## 常见问题
 
