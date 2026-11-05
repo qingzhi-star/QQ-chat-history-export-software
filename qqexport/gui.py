@@ -4,13 +4,18 @@ from __future__ import annotations
 import base64
 import calendar
 import io
+import logging
 import os
 import queue
+import re
 import threading
+import traceback
 import tkinter as tk
 from datetime import datetime, timedelta
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
+
+from qqexport import selection
 
 try:
     from PIL import Image, ImageDraw, ImageTk
@@ -72,11 +77,49 @@ class App:
         self.date_end: int | None = None
         self.last_out = str(Path.home() / "Documents")
         self._busy = False
+        self._load_gen = 0
+        self._setup_logging()
         root.title("QQ 聊天记录导出")
         root.geometry("1120x700")
         root.minsize(960, 560)
         self._build()
         self._load_chats()
+
+    def _setup_logging(self) -> None:
+        self._log = logging.getLogger("qqexport.gui")
+        if self._log.handlers:
+            return
+        base = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "QQExport" / "logs"
+        try:
+            base.mkdir(parents=True, exist_ok=True)
+            handler = logging.FileHandler(base / "app.log", encoding="utf-8")
+        except OSError:
+            return
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)s %(message)s"))
+        self._log.addHandler(handler)
+        self._log.setLevel(logging.WARNING)
+
+    def _redact(self, text: str) -> str:
+        uin = getattr(self, "uin", None)
+        if uin:
+            text = text.replace(str(uin), "<uin>")
+        text = re.sub(r"[A-Za-z]:\\[^\s\"']+", "<path>", text)
+        text = re.sub(r"\b\d{8,12}\b", "<num>", text)
+        return text[:800]
+
+    def _log_exception(self, context: str, exc: BaseException) -> None:
+        log = getattr(self, "_log", None)
+        if log is None:
+            return
+        try:
+            frames = traceback.extract_tb(exc.__traceback__)[-6:]
+            where = " | ".join(
+                f"{Path(f.filename).name}:{f.lineno}" for f in frames)
+            log.error("%s: %s: %s @ %s", context, type(exc).__name__,
+                      self._redact(str(exc)), where)
+        except Exception:
+            pass
 
     # ---------- 布局 ----------
     def _build(self) -> None:
@@ -181,6 +224,8 @@ class App:
     # ---------- 数据 ----------
     def _load_chats(self) -> None:
         self.export_btn.state(["disabled"])
+        self._load_gen = getattr(self, "_load_gen", 0) + 1
+        gen = self._load_gen
 
         def work():
             try:
@@ -221,9 +266,12 @@ class App:
                     except Exception:
                         avs[info.chat_id] = None
             except Exception as exc:  # noqa: BLE001
-                self.root.after(0, lambda e=exc: self._fail(e))
+                self.root.after(0, lambda e=exc, g=gen: (
+                    self._fail(e) if g == self._load_gen else None))
                 return
-            self.root.after(0, lambda: self._loaded(source, infos, metas, avs))
+            self.root.after(0, lambda g=gen: (
+                self._loaded(source, infos, metas, avs)
+                if g == self._load_gen else None))
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -423,10 +471,12 @@ class App:
 
     def _refresh_failed(self, exc: Exception) -> None:
         self._refreshing = False
+        self._log_exception("refresh", exc)
         self.status.configure(text=f"实时更新失败：{type(exc).__name__}",
                               foreground="#b00")
 
     def _fail(self, exc: Exception) -> None:
+        self._log_exception("load", exc)
         self.count_label.configure(text="读取失败")
         self.status.configure(text=str(exc), foreground="#b00")
         messagebox.showerror("读取失败", str(exc))
@@ -1030,13 +1080,10 @@ class App:
 
     def _toggle_all(self) -> None:
         self._clear_date_filter()
-        if len(self.selected_msgs) == len(self.preview):
+        if selection.is_all(self.selected_msgs, len(self.preview)):
             self.selected_msgs.clear()
         else:
-            self.selected_msgs = set(range(len(self.preview)))
-        self.all_btn.configure(
-            text="全不选" if len(self.selected_msgs) == len(self.preview)
-            else "全选")
+            self.selected_msgs = selection.all_indices(len(self.preview))
         self._apply_selection_visuals()
         self._update_all_label()
 
@@ -1098,10 +1145,7 @@ class App:
 
     def _toggle_check(self, idx: int) -> None:
         self._clear_date_filter()
-        if idx in self.selected_msgs:
-            self.selected_msgs.discard(idx)
-        else:
-            self.selected_msgs.add(idx)
+        selection.toggle(self.selected_msgs, idx)
         self._apply_selection_visuals([idx])
         self._update_all_label()
 
@@ -1111,13 +1155,9 @@ class App:
 
     def _apply_dates(self, start: int | None, end: int | None) -> None:
         self.date_start, self.date_end = start, end
-        self.selected_msgs = {
-            i for i, m in enumerate(self.preview)
-            if (start is None or m.ts >= start)
-            and (end is None or m.ts <= end)}
-        self.all_btn.configure(
-            text="全不选" if len(self.selected_msgs) == len(self.preview)
-            else "全选")
+        self.selected_msgs = selection.indices_in_range(
+            self.preview, start, end)
+        self._update_all_label()
         if start and end:
             a = datetime.fromtimestamp(start).strftime("%Y，%m，%d")
             b = datetime.fromtimestamp(end).strftime("%Y，%m，%d")
@@ -1173,6 +1213,7 @@ class App:
             pass
 
     def _export_failed(self, exc: Exception) -> None:
+        self._log_exception("export", exc)
         self.status.configure(text=str(exc), foreground="#b00")
         messagebox.showerror("导出失败", str(exc))
 
@@ -1460,6 +1501,8 @@ class ImageViewer(tk.Toplevel):
 def run_gui(*, data_dir: Path | None = None, uin: str | None = None) -> int:
     root = tk.Tk()
     app = App(root, data_dir=data_dir, uin=uin)
+    root.report_callback_exception = (
+        lambda exc, value, tb: app._log_exception("tk", value))
     root.protocol("WM_DELETE_WINDOW", app.close)
     root.mainloop()
     return 0

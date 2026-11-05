@@ -51,7 +51,20 @@ def discover(con: sqlite3.Connection) -> TableSet:
 
 
 def columns_of(con: sqlite3.Connection, table: str) -> list[str]:
-    return [r[1] for r in con.execute(f"PRAGMA table_info({_quote(table)})")]
+    cache = getattr(con, "_qqexport_columns", None)
+    if cache is None:
+        cache = {}
+        try:
+            con._qqexport_columns = cache  # type: ignore[attr-defined]
+        except AttributeError:
+            cache = None
+    if cache is not None and table in cache:
+        return list(cache[table])
+    columns = [r[1] for r in con.execute(
+        f"PRAGMA table_info({_quote(table)})")]
+    if cache is not None:
+        cache[table] = tuple(columns)
+    return columns
 
 
 def select_columns(con: sqlite3.Connection, table: str,
@@ -86,7 +99,8 @@ def iter_chat_rows(con: sqlite3.Connection, kind: str, peer: str, *,
     name = table.c2c if kind == KIND_C2C else table.group
     if name is None or COL_PEER_ID not in columns_of(con, name):
         return
-    sql = (f'SELECT {", ".join(_quote(c) for c in MSG_COLUMNS if c in columns_of(con, name))} '
+    columns = [c for c in MSG_COLUMNS if c in columns_of(con, name)]
+    sql = (f'SELECT {", ".join(_quote(c) for c in columns)} '
            f'FROM {_quote(name)} WHERE {_quote(COL_PEER_ID)} = ? '
            f'ORDER BY {_quote(COL_TIMESTAMP)} ASC, {_quote(COL_MSG_ID)} ASC')
     cursor = con.execute(sql, (peer,))
@@ -96,7 +110,7 @@ def iter_chat_rows(con: sqlite3.Connection, kind: str, peer: str, *,
             return
         for values in page:
             row: dict[str, object] = {c: None for c in MSG_COLUMNS}
-            row.update(zip([c for c in MSG_COLUMNS if c in columns_of(con, name)], values))
+            row.update(zip(columns, values))
             yield row
 
 
