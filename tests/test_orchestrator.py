@@ -108,6 +108,60 @@ def test_time_range_and_message_filters(tmp_path):
     assert (folder2 / "chat.txt").read_text(encoding="utf-8-sig").count("\n") == 1
 
 
+def test_failed_export_keeps_existing_output(tmp_path, monkeypatch):
+    src = make_source(tmp_path)
+    out = tmp_path / "out"
+    opts = orchestrator.ExportOptions(format="txt", out_base=out, now=NOW)
+    orchestrator.export_chats(src, ["c2c:u_a"], opts)
+    folder = out / orchestrator.ROOT_FOLDER / "昵称A-987654321"
+    marker = folder / "keep-me.txt"
+    marker.write_text("old", encoding="utf-8")
+
+    def boom(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(orchestrator.txt_mod, "write_txt", boom)
+    rep = orchestrator.export_chats(src, ["c2c:u_a"], opts)
+    assert marker.is_file()
+    assert (folder / "chat.txt").is_file()
+    assert rep.chats_exported == 0
+    root = out / orchestrator.ROOT_FOLDER
+    assert not [p for p in root.iterdir() if p.name.startswith(".tmp-")]
+    assert not [p for p in root.iterdir() if ".old-" in p.name]
+
+
+def test_pdf_failure_does_not_publish_empty_folder(tmp_path, monkeypatch):
+    src = make_source(tmp_path)
+    out = tmp_path / "out"
+
+    def fail_pdf(html_path, out_pdf, **kw):
+        from qqexport.export.pdf import PdfResult
+        return PdfResult(None, error="pdf boom")
+
+    monkeypatch.setattr(orchestrator.pdf_mod, "write_pdf", fail_pdf)
+    rep = orchestrator.export_chats(
+        src, ["c2c:u_a"], orchestrator.ExportOptions(
+            format="pdf", out_base=out, now=NOW))
+    root = out / orchestrator.ROOT_FOLDER
+    assert not (root / "昵称A-987654321").exists()
+    assert rep.chats_exported == 0
+    assert not [p for p in root.iterdir() if p.name.startswith(".tmp-")]
+
+
+def test_successful_reexport_replaces_old_folder(tmp_path):
+    src = make_source(tmp_path)
+    out = tmp_path / "out"
+    opts = orchestrator.ExportOptions(format="txt", out_base=out, now=NOW)
+    orchestrator.export_chats(src, ["c2c:u_a"], opts)
+    folder = out / orchestrator.ROOT_FOLDER / "昵称A-987654321"
+    (folder / "stale.txt").write_text("old", encoding="utf-8")
+    orchestrator.export_chats(src, ["c2c:u_a"], opts)
+    assert not (folder / "stale.txt").exists()
+    assert (folder / "chat.txt").is_file()
+    root = out / orchestrator.ROOT_FOLDER
+    assert not [p for p in root.iterdir() if ".old-" in p.name]
+
+
 def test_system_only_c2c_chat_is_hidden(tmp_path):
     normal = sd.text_row(ts=100, text="hi", uid="u_a")
     system = sd.text_row(ts=200, text="x", uid="u_sys", uin="987654321",

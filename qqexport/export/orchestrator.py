@@ -182,6 +182,22 @@ def _inline_images(messages: list[Message]) -> list[Message]:
     return out
 
 
+def _commit_dir(work: Path, final: Path) -> None:
+    """把已完成的临时目录原子换到目标位置；失败时恢复旧目录。"""
+    backup: Path | None = None
+    if final.exists():
+        backup = final.with_name(f"{final.name}.old-{os.getpid()}-{time.time_ns()}")
+        final.rename(backup)
+    try:
+        work.rename(final)
+    except BaseException:
+        if backup is not None and not final.exists():
+            backup.rename(final)
+        raise
+    if backup is not None:
+        shutil.rmtree(backup, ignore_errors=True)
+
+
 def export_chats(source: ExportSource, chat_ids: list[str],
                  opts: ExportOptions) -> ExportReport:
     formats = {f.lower() for f in (opts.formats or {opts.format})}
@@ -222,19 +238,17 @@ def export_chats(source: ExportSource, chat_ids: list[str],
             messages = [m for m in messages if m.ts <= opts.end_ts]
         refs = [s.media for m in messages for s in m.segments if s.media is not None]
         final = root / folder_name(info)
-        if final.exists():
-            shutil.rmtree(final)
+        work = root / f".tmp-{os.getpid()}-{time.time_ns()}"
+        committed = False
         try:
+            work.mkdir(parents=True)
             if formats == {"txt"}:
-                final.mkdir(parents=True)
                 chat = Chat(kind=info.kind, peer_id=info.peer, title=info.title,
                             subtitle=info.subtitle, messages=messages)
-                txt_mod.write_txt(chat, final / "chat.txt",
+                txt_mod.write_txt(chat, work / "chat.txt",
                                   txt_mod.TxtOptions(encoding=opts.encoding))
             else:
                 keep_html = "html" in formats
-                work = final if keep_html else root / f".tmp-{os.getpid()}-{time.time_ns()}"
-                work.mkdir(parents=True)
                 rel: dict[Path, str] = {}
                 report.media_referenced += len(refs)
                 report.media_found += sum(
@@ -272,20 +286,26 @@ def export_chats(source: ExportSource, chat_ids: list[str],
                         if not res.ok:
                             report.pdf_error = res.error
                             report.warnings.append(f"{chat_id}: {res.error}")
-                        elif not keep_html:
-                            final.mkdir(parents=True, exist_ok=True)
-                            shutil.move(str(work / "chat.pdf"),
-                                        str(final / "chat.pdf"))
                 if "txt" in formats:
-                    if not keep_html:
-                        final.mkdir(parents=True, exist_ok=True)
-                    txt_mod.write_txt(chat, final / "chat.txt",
+                    txt_mod.write_txt(chat, work / "chat.txt",
                                       txt_mod.TxtOptions(encoding=opts.encoding))
                 if not keep_html:
-                    shutil.rmtree(work, ignore_errors=True)
-                    if not final.exists() or not any(final.iterdir()):
-                        shutil.rmtree(final, ignore_errors=True)
+                    (work / "chat.html").unlink(missing_ok=True)
+                    media_dir = work / "media"
+                    if media_dir.exists():
+                        shutil.rmtree(media_dir, ignore_errors=True)
 
+            produced = any((work / f"chat.{ext}").is_file() for ext in formats)
+            if produced:
+                _commit_dir(work, final)
+                committed = True
+            else:
+                shutil.rmtree(work, ignore_errors=True)
+        except Exception as exc:
+            shutil.rmtree(work, ignore_errors=True)
+            report.warnings.append(f"{chat_id}: {type(exc).__name__}")
+
+        if committed:
             report.exported_dirs.append(str(final))
             report.chats_exported += 1
             for m in messages:
@@ -305,9 +325,6 @@ def export_chats(source: ExportSource, chat_ids: list[str],
                         report.forwards_legacy_rendered += 1
                     if s.kind == "voice":
                         report.voice_raw += 1
-        except Exception as exc:
-            shutil.rmtree(final, ignore_errors=True)
-            report.warnings.append(f"{chat_id}: {type(exc).__name__}")
 
     report.messages_failed = max(0, report.messages_total - report.messages_ok
                                  - report.messages_degraded)
