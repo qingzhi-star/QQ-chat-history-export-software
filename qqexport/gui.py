@@ -221,7 +221,7 @@ class App:
                     except Exception:
                         avs[info.chat_id] = None
             except Exception as exc:  # noqa: BLE001
-                self.root.after(0, lambda: self._fail(exc))
+                self.root.after(0, lambda e=exc: self._fail(e))
                 return
             self.root.after(0, lambda: self._loaded(source, infos, metas, avs))
 
@@ -375,7 +375,7 @@ class App:
                     except Exception:
                         pass
         except Exception as exc:  # noqa: BLE001
-            self.root.after(0, lambda: self._refresh_failed(exc))
+            self.root.after(0, lambda e=exc: self._refresh_failed(e))
             return
         self.root.after(0, lambda: self._apply_refresh(
             new_source, infos, current_id, fresh, metas,
@@ -836,13 +836,41 @@ class App:
         self.export_center.pack(side="right")
         self.export_right.pack(side="right")
         self.status.configure(text="勾选消息，或使用全选/日期选择")
+
+        at_bottom = self.text.yview()[1] >= 0.99
+        try:
+            top = self.text.index("@0,0")
+            info = self.text.dlineinfo(top)
+            offset = info[1] if info else 0
+            line = int(top.split(".")[0])
+            anchor = next((i for i, (a, b) in self.msg_spans.items()
+                           if a <= line <= b), 0)
+        except tk.TclError:
+            anchor, offset, at_bottom = 0, 0, True
+
         self.text.pack_forget()
         self.tsb.pack_forget()
-        self.gutter.pack(side="left", fill="y")
-        self.text.pack(side="left", fill="both", expand=True)
-        self.tsb.pack(side="right", fill="y")
-        self.root.update_idletasks()
-        self._build_gutter()
+        self.sel_frame.pack(fill="both", expand=True)
+        self._build_selection_rows()
+        self.root.after(60, lambda: self._restore_selection_scroll(
+            anchor, offset, at_bottom))
+        self.sel_canvas.bind_all("<MouseWheel>", self._sel_wheel)
+
+    def _restore_selection_scroll(self, anchor: int, offset: int,
+                                  at_bottom: bool) -> None:
+        self.sel_canvas.update_idletasks()
+        self.sel_inner.update_idletasks()
+        self.sel_canvas.configure(scrollregion=self.sel_canvas.bbox("all"))
+        if at_bottom or not self.sel_rows:
+            self.sel_canvas.yview_moveto(1.0)
+            return
+        idx = min(anchor, len(self.sel_rows) - 1)
+        row = self.sel_rows[idx]["frame"]
+        total = max(1, self.sel_inner.winfo_height())
+        view = max(1, self.sel_canvas.winfo_height())
+        span = max(1, total - view)
+        y = max(0, row.winfo_y() + offset)
+        self.sel_canvas.yview_moveto(min(1.0, y / span))
 
     def _text_pixels(self, start: str, end: str) -> int:
         try:
@@ -889,13 +917,14 @@ class App:
         self.export_center.pack_forget()
         self.export_right.pack_forget()
         self.date_label.pack_forget()
-        self.gutter.pack_forget()
-        for cb in self.check_buttons.values():
-            cb.destroy()
-        self.check_buttons = {}
-        self.check_vars = {}
-        for idx, (first, last) in self.msg_spans.items():
-            self.text.tag_remove("rowsel", f"{first}.0", f"{last}.end+1c")
+        try:
+            self.sel_canvas.unbind_all("<MouseWheel>")
+        except tk.TclError:
+            pass
+        self.sel_frame.pack_forget()
+        for row in self.sel_rows:
+            row["frame"].destroy()
+        self.sel_rows = []
         self.text.pack(side="left", fill="both", expand=True)
         self.tsb.pack(side="right", fill="y")
         self.text.configure(state="disabled")
@@ -904,24 +933,45 @@ class App:
         self.sel_canvas.yview_scroll(int(-event.delta / 120), "units")
         return "break"
 
+    def _draw_check(self, canvas: tk.Canvas, selected: bool,
+                    bg: str) -> None:
+        canvas.configure(bg=bg)
+        canvas.delete("all")
+        if selected:
+            canvas.create_oval(1, 1, 17, 17, fill="#8a8a8a", outline="#8a8a8a")
+            canvas.create_line(5, 9, 8, 12, 13, 5, fill="#ffffff", width=2)
+        else:
+            canvas.create_oval(1, 1, 17, 17, fill=bg, outline="#999999", width=2)
+
+    def _bind_row(self, widgets, idx: int) -> None:
+        for w in widgets:
+            w.bind("<MouseWheel>", self._sel_wheel)
+            w.bind("<Button-1>", lambda _e, i=idx: self._toggle_check(i))
+
     def _build_selection_rows(self) -> None:
         for child in self.sel_inner.winfo_children():
             child.destroy()
         self.sel_rows = []
+        self._sel_photos = []
         for idx, m in enumerate(self.preview):
             row = tk.Frame(self.sel_inner, bg="#ffffff")
-            row.pack(fill="x", padx=4, pady=2)
-            var = tk.BooleanVar(value=idx in self.selected_msgs)
-            cb = tk.Checkbutton(
-                row, variable=var, bg="#ffffff", activebackground="#ffffff",
-                padx=0, pady=0, bd=0, highlightthickness=0,
-                command=lambda i=idx, v=var: self._checkbox_toggled(i, v))
-            cb.pack(side="left", anchor="n", padx=(2, 6), pady=4)
+            row.pack(fill="x", padx=2, pady=1)
+
+            holder = tk.Frame(row, width=30, bg="#ffffff")
+            holder.pack(side="left", fill="y")
+            holder.pack_propagate(False)
+            cb = tk.Canvas(holder, width=18, height=18, bg="#ffffff",
+                           highlightthickness=0, bd=0)
+            cb.pack(pady=8)
+            cb.bind("<Button-1>",
+                    lambda _e, i=idx: self._toggle_check(i))
+
             avatar = tk.Label(row, bg="#ffffff")
             photo = self._avatar_photo(m.avatar_data)
             if photo is not None:
                 avatar.configure(image=photo)
-            avatar.pack(side="left", anchor="n", padx=(0, 6), pady=2)
+            avatar.pack(side="left", anchor="n", padx=(0, 7), pady=3)
+
             content = tk.Frame(row, bg="#ffffff")
             content.pack(side="left", fill="x", expand=True)
             stamp = datetime.fromtimestamp(m.ts).strftime("%H:%M:%S")
@@ -929,29 +979,44 @@ class App:
                             bg="#ffffff", fg="#777",
                             font=("Microsoft YaHei UI", 9), anchor="w")
             head.pack(fill="x")
-            body = tk.Label(
-                content, text=self._row_text(m), bg="#ffffff", fg="#222",
-                font=("Microsoft YaHei UI", 10), anchor="w", justify="left",
-                wraplength=760)
-            body.pack(fill="x")
-            widgets = [row, avatar, content, head, body]
-            for w in widgets + [cb]:
-                w.bind("<MouseWheel>", self._sel_wheel)
-                w.bind("<Button-1>", lambda _e, i=idx: self._toggle_check(i))
-            self.sel_rows.append({"frame": row, "var": var, "cb": cb,
-                                  "bg": widgets})
+
+            text = self._row_text(m)
+            bg_widgets = [row, holder, avatar, content, head]
+            if text:
+                body = tk.Label(
+                    content, text=text, bg="#ffffff", fg="#222",
+                    font=("Microsoft YaHei UI", 10), anchor="w",
+                    justify="left", wraplength=720)
+                body.pack(fill="x")
+                bg_widgets.append(body)
+
+            for seg in m.segments:
+                if seg.kind != "image":
+                    continue
+                pic = self._image_photo(seg.media)
+                if pic is None:
+                    continue
+                self._sel_photos.append(pic)
+                img = tk.Label(content, image=pic, bg="#ffffff", anchor="w")
+                img.pack(anchor="w", pady=(2, 2))
+                bg_widgets.append(img)
+
+            self._bind_row(bg_widgets, idx)
+            holder.bind("<Button-1>", lambda _e, i=idx: self._toggle_check(i))
+            self.sel_rows.append({"frame": row, "cb": cb,
+                                  "bg": bg_widgets})
         self._apply_selection_visuals()
 
     def _row_text(self, m) -> str:
         if getattr(m, "is_recall", False):
             return "── 撤回了一条消息 ──"
         parts = []
-        for s in m.segments:
-            if s.kind == "reply" and s.quoted is not None:
+        for seg in m.segments:
+            if seg.kind == "reply" and seg.quoted is not None:
                 quote = " ".join(txt.segment_text(x)
-                                 for x in s.quoted.segments).strip()
-                parts.append(f"↪ {s.quoted.sender_name}：{quote}")
-            parts.append(txt.segment_text(s))
+                                 for x in seg.quoted.segments).strip()
+                parts.append(f"↪ {seg.quoted.sender_name}：{quote}")
+            parts.append(txt.segment_text(seg))
         return "\n".join(p for p in parts if p)
 
 
@@ -1006,24 +1071,16 @@ class App:
         self.check_buttons[idx] = cb
 
     def _apply_selection_visuals(self, indices=None) -> None:
-        items = range(len(self.preview)) if indices is None else indices
+        items = range(len(self.sel_rows)) if indices is None else indices
         for idx in items:
-            var = self.check_vars.get(idx)
-            if var is not None:
-                var.set(idx in self.selected_msgs)
-            cb = self.check_buttons.get(idx)
-            if cb is not None:
-                bg = "#e6f0ff" if idx in self.selected_msgs else "#ffffff"
-                cb.configure(bg=bg, activebackground=bg)
-            span = self.msg_spans.get(idx)
-            if span:
-                first, last = span
-                if idx in self.selected_msgs:
-                    self.text.tag_add("rowsel", f"{first}.0", f"{last}.end+1c")
-                    self.text.tag_raise("rowsel")
-                else:
-                    self.text.tag_remove("rowsel", f"{first}.0",
-                                         f"{last}.end+1c")
+            if idx >= len(self.sel_rows):
+                continue
+            row = self.sel_rows[idx]
+            sel = idx in self.selected_msgs
+            bg = "#e6f0ff" if sel else "#ffffff"
+            self._draw_check(row["cb"], sel, bg)
+            for w in row["bg"]:
+                w.configure(bg=bg)
 
     def _update_all_label(self) -> None:
         self.all_btn.configure(
@@ -1100,7 +1157,7 @@ class App:
                         start_ts=start_ts, end_ts=end_ts,
                         message_ids=message_ids))
             except Exception as exc:  # noqa: BLE001
-                self.root.after(0, lambda: self._export_failed(exc))
+                self.root.after(0, lambda e=exc: self._export_failed(e))
                 return
             self.root.after(0, lambda: self._export_done(rep, out_base))
 
