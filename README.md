@@ -201,6 +201,11 @@ tools/              打包入口、安装脚本、隐私巡检
 docs/               设计与兼容性文档
 ```
 
+## 路线图
+
+- [P1+ 任务书：稳定性、导出正确性与发布工程](docs/superpowers/plans/2026-11-06-p1plus-stabilization.md)
+- [P2 任务书：功能扩展与性能架构](docs/superpowers/plans/2026-11-06-p2-product-evolution.md)
+
 ## 许可
 
 本项目使用 MIT 许可证，详见 [LICENSE](LICENSE)。
