@@ -71,6 +71,7 @@ best_effort，由 identity 比对兜底。
 from __future__ import annotations
 
 import contextlib
+import errno
 import os
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
@@ -90,6 +91,10 @@ _SHM_LOCK_MIN_SIZE = SHM_LOCK_OFFSET + SHM_LOCK_LENGTH   # 123
 
 class SnapshotError(RuntimeError):
     """重试耗尽仍无法尽力获取一致快照。消息必须提示用户完全退出 QQ。"""
+
+
+class SnapshotBusyError(SnapshotError):
+    """复制期间源库变化或暂被占用；可稍后重试，不代表口令失效。"""
 
 
 @dataclass(frozen=True)
@@ -333,6 +338,7 @@ def snapshot(src_db: Path, dst_dir: Path, *,
         # wal.py 的铁律本就是「-shm 出任何问题都不得导致 WAL 恢复失败」。
         return (file_identity(src_db), file_identity(src_wal))
 
+    busy = False
     for attempt in range(1, max(1, attempts) + 1):
         # 第 1 层：记录源三件套的身份（窗口覆盖本轮全部复制动作）。
         # 陈旧副本的清理由 copy_family 按成员负责（§5.4），失败路径另见下文。
@@ -354,7 +360,9 @@ def snapshot(src_db: Path, dst_dir: Path, *,
                 # 第 2 层：复制真正需要同时刻的那一对
                 dst_db, dst_wal, _s = copy_family(src_db, dst_dir,
                                                   members=("", "-wal"))
-            except OSError:
+            except OSError as exc:
+                busy = (exc.errno in {errno.EBUSY, errno.EAGAIN}
+                        or getattr(exc, "winerror", None) in {32, 33})
                 _remove_family(dst_dir, src_db.name)
                 continue
             # 第 3 层：复制后再次记录源身份（仍在锁内，窗口受锁保护）
@@ -362,11 +370,13 @@ def snapshot(src_db: Path, dst_dir: Path, *,
 
         # 第 4 层：前后不一致 → 本轮副本作废，重试
         if before != after:
+            busy = True
             _remove_family(dst_dir, src_db.name)
             continue
 
         # 第 5 层：内容级校验（全部针对副本）
         if not validate(dst_db):
+            busy = False
             _remove_family(dst_dir, src_db.name)
             continue
         wal_validated = _wal_ok(dst_db, dst_wal, dst_shm)
@@ -383,7 +393,8 @@ def snapshot(src_db: Path, dst_dir: Path, *,
         return SnapshotResult(dst_db, dst_wal, dst_shm, attempt, bool(got_lock),
                               True, total, consistency)
 
-    raise SnapshotError(
+    error = SnapshotBusyError if busy else SnapshotError
+    raise error(
         f"尽力获取一致快照失败：复制 {src_db.name} 后连续 {attempts} 次未能通过"
         f"校验（源文件在复制期间一直在变，或副本内容不可用）。"
         f"最可能的原因是 QQ 正在写入数据库。请完全退出 QQ（托盘图标右键退出，"

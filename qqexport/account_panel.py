@@ -47,7 +47,7 @@ def database_in_use(account):
     return False
 
 
-def read_identity(account):
+def read_identity(account, *, include_avatar=True):
     name = "QQ 用户"
     try:
         key = keystore.KeyStore().load(account.uin)
@@ -63,7 +63,7 @@ def read_identity(account):
                     name = profile_name(contacts.Contacts.load(profile,group,account_uin=account.uin),account.uin)
     except (OSError,RuntimeError,ValueError,sqlite3.Error):
         pass
-    return Identity(account.uin,name,avatars.fetch_avatar(account.uin),database_in_use(account))
+    return Identity(account.uin,name,avatars.fetch_avatar(account.uin) if include_avatar else None,database_in_use(account))
 
 
 class AccountPanel:

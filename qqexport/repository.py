@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from collections import OrderedDict
 import hashlib
 import sqlite3
 import threading
@@ -30,6 +31,8 @@ class MessageRepository:
         self.msg_db = source.msg_db
         self.account_uin, self.meta, self.warnings = source.account_uin, source.meta, source.warnings
         self._lock = threading.RLock()
+        self._pages = OrderedDict()
+        self._page_bytes = self._page_rows = 0
         self._con = sqlite3.connect(self.msg_db.resolve().as_uri() + "?mode=ro", uri=True,
                                     check_same_thread=False)
         self._con.execute("PRAGMA temp_store=MEMORY")
@@ -67,6 +70,8 @@ class MessageRepository:
 
     def close(self):
         with self._lock:
+            self._pages.clear()
+            self._page_bytes = self._page_rows = 0
             self._con.close()
 
     def chats(self):
@@ -145,15 +150,31 @@ class MessageRepository:
         selected = ",".join("m." + tables._quote(c) for c in cols)
         order = "DESC" if reverse else "ASC"
         ordering = ",".join(f"o.{key} {order}" for key in ("ts","mid","rid")) if cursor_order else f"o.ord {order}"
+        key = (chat_id,where,tuple(params),limit,reverse,cursor_order)
         with self._lock:
+            if key in self._pages:
+                self._pages.move_to_end(key)
+                return list(self._pages[key][0])
             rows = self._con.execute(
                 f"SELECT o.ord,o.ts,o.mid,o.rid,{selected} FROM ordering o "
                 f"JOIN {tables._quote(table)} m ON m.rowid=o.rid "
                 f"WHERE o.chat=? {where} ORDER BY {ordering} LIMIT ?",
                 (chat_id, *params, limit)).fetchall()
-        ctx = replace(self.source.ctx, kind=kind, group_id=peer if kind == "group" else None,
-                      resolve_uin=self.source.contacts.uin_of)
-        return [(r[0], Cursor(*r[1:4]), messages.parse_message(dict(zip(cols, r[4:])), ctx)) for r in rows]
+            ctx = replace(self.source.ctx, kind=kind, group_id=peer if kind == "group" else None,
+                          resolve_uin=self.source.contacts.uin_of)
+            output = [(r[0], Cursor(*r[1:4]), messages.parse_message(dict(zip(cols, r[4:])), ctx)) for r in rows]
+            # 仅缓存当前只读副本的解析页；限制页数、行数和原始载荷，关闭即清理。
+            weight = sum(len(value)*2 if isinstance(value,str) else len(value)
+                         if isinstance(value,bytes) else 8 for row in rows for value in row)
+            if weight<=8*1024*1024 and output:
+                self._pages[key] = (tuple(output),weight)
+                self._page_bytes += weight
+                self._page_rows += len(output)
+                while len(self._pages)>16 or self._page_rows>2048 or self._page_bytes>8*1024*1024:
+                    old,size = self._pages.popitem(last=False)[1]
+                    self._page_bytes -= size
+                    self._page_rows -= len(old)
+            return output
 
     def page(self, chat_id, *, after: Cursor | None = None, limit=128, reverse=False):
         where, params = "", ()

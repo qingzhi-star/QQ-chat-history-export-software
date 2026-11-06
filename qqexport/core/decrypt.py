@@ -42,6 +42,10 @@ class DecryptError(RuntimeError):
     """解密失败。消息不得包含口令或数据库绝对路径。"""
 
 
+class DatabaseBusyError(DecryptError):
+    """源数据库正在变化，本次未取得可用副本；保留当前会话再重试。"""
+
+
 @dataclass
 class DecryptResult:
     plaintext_db: Path
@@ -330,6 +334,8 @@ def decrypt_database(account: QQAccount, passphrase: bytes, *, dst_dir: Path,
         shot = snap.snapshot(src_db, dst_dir,
                              validator=snap.make_validator(passphrase),
                              attempts=attempts)
+    except snap.SnapshotBusyError as exc:
+        raise DatabaseBusyError(str(exc)) from exc
     except snap.SnapshotError as exc:
         raise DecryptError(str(exc)) from exc
 

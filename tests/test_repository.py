@@ -65,3 +65,24 @@ def test_sidebar_bulk_summary_is_sorted_and_does_not_rescan_source(tmp_path,monk
         assert revision and repo.sidebar()==(infos,metas)
     finally:
         repo.close()
+
+
+def test_repeated_pages_reuse_parsing_and_cache_remains_bounded(tmp_path,monkeypatch):
+    from qqexport.qq import messages
+    from unittest.mock import Mock
+    repo=MessageRepository(source(tmp_path,3000))
+    parse=Mock(wraps=messages.parse_message)
+    monkeypatch.setattr(messages,"parse_message",parse)
+    try:
+        first=repo.window("c2c:u_a",128,128)
+        assert parse.call_count==128
+        assert repo.window("c2c:u_a",128,128)==first and parse.call_count==128
+        # 不让调用方修改返回容器影响缓存。
+        first.clear()
+        assert len(repo.window("c2c:u_a",128,128))==128
+        for offset in range(0,3000,128):
+            repo.window("c2c:u_a",offset,128)
+        assert len(repo._pages)<=16 and repo._page_rows<=2048 and repo._page_bytes<=8*1024*1024
+    finally:
+        repo.close()
+    assert not repo._pages

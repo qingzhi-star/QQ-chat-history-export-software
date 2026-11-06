@@ -10,12 +10,14 @@ import os
 from pathlib import Path
 import sys
 import threading
+import time
 from datetime import datetime
 
 from qqexport import __version__, config
 from qqexport.account_access import account_key, AccountAccessError
 from qqexport.account_panel import profile_name, read_identity
 from qqexport.core import discover
+from qqexport.core.decrypt import DatabaseBusyError, DecryptError
 from qqexport.errors import UserError
 from qqexport.export import orchestrator
 from qqexport.export.model import Message, Segment, MediaRef
@@ -38,6 +40,8 @@ class DesktopBackend:
         self.infos, self.metas, self.accounts = [], {}, {}
         self.resources, self.portraits = OrderedDict(), OrderedDict()
         self.generation, self.stamp = 0, None
+        self._refreshing = False
+        self._refresh_retry_at, self._refresh_failures = 0, 0
         self.demo = demo
         self.preferences = config.Config.load()
         from qqexport.desktop_tools import DesktopTools
@@ -54,7 +58,8 @@ class DesktopBackend:
                 self.source = None
 
     def register(self, kind, value, identity):
-        token = hashlib.sha256(f"{self.generation}:{kind}:{identity}".encode()).hexdigest()
+        scope = 0 if kind=="account-avatar" else self.generation
+        token = hashlib.sha256(f"{scope}:{kind}:{identity}".encode()).hexdigest()
         self.resources[token] = kind, value
         self.resources.move_to_end(token)
         while len(self.resources)>8192:
@@ -75,7 +80,7 @@ class DesktopBackend:
             explicit=Path(self.preferences.data_dir) if self.preferences.data_dir else None)}
         identities = []
         for account in self.accounts.values():
-            identity = read_identity(account)
+            identity = read_identity(account,include_avatar=False)
             avatar = None
             if identity.avatar:
                 from PIL import Image
@@ -87,18 +92,21 @@ class DesktopBackend:
         if current not in self.accounts and len(self.accounts)==1:
             current = next(iter(self.accounts))
         state = self.switch(current) if current in self.accounts else self.state()
+        for identity in identities:
+            identity["avatar"] = identity["avatar"] or self.register("account-avatar",identity["uin"],identity["uin"])
         return dict(state,accounts=identities,version=__version__)
 
     @staticmethod
     def account_stamp(account):
         values = []
-        for path in (account.msg_db,account.msg_db.with_name(account.msg_db.name+"-wal"),
-                     account.db_dir/"profile_info.db",account.db_dir/"group_info.db"):
-            try:
-                stat = path.stat()
-                values.append((stat.st_size,stat.st_mtime_ns))
-            except OSError:
-                values.append(None)
+        for name in ("nt_msg.db", "profile_info.db", "group_info.db"):
+            for suffix in ("", "-wal"):
+                path = account.db_dir/(name+suffix)
+                try:
+                    stat = path.stat()
+                    values.append((stat.st_dev,stat.st_ino,stat.st_size,stat.st_mtime_ns))
+                except OSError:
+                    values.append(None)
         return tuple(values)
 
     def switch(self, uin):
@@ -110,27 +118,56 @@ class DesktopBackend:
         account = self.accounts.get(uin)
         if account is None:
             raise UserError("请先在本机 QQ 登录此账号，再重新检测")
+        if self.account==account and self.stamp==self.account_stamp(account):
+            return self.state()
         # 显式点击账号后自动获取、验证并保存口令；失败保留旧会话。
         key = account_key(account,allow_scan=True)
-        self._open(account,key)
+        try:
+            self._open(account,key)
+        except DatabaseBusyError:
+            raise UserError("QQ 正在更新本机记录，自动重试后仍暂时无法读取，请稍后再选此账号；当前会话已保留。") from None
+        except DecryptError:
+            raise UserError("未能读取所选账号的本机记录，请确认数据库完整，必要时登录 QQ 后重试；当前会话已保留。") from None
         self.preferences.last_account = uin
         self.preferences.save()
         return self.state()
 
     def _open(self,account,key):
-        stamp = self.account_stamp(account)
-        source = ExportSource.open(account,key,media_index=self.source.media_index if self.source and self.account==account else None)
+        for attempt in range(3):
+            stamp = self.account_stamp(account)
+            try:
+                candidate = self._prepare(account,key,self.source.media_index if self.source and self.account==account else None)
+                break
+            except DatabaseBusyError:
+                if attempt==2:
+                    raise
+                time.sleep(.2*(attempt+1))
+        self._install(account,candidate,stamp)
+
+    @staticmethod
+    def _prepare(account,key,media_index):
+        source = ExportSource.open(account,key,media_index=media_index)
+        repo = None
         try:
             repo = MessageRepository(source)
             infos,metas = repo.sidebar()
+            return source,repo,infos,metas
         except BaseException:
+            if repo is not None:
+                repo.close()
             source.close()
             raise
+
+    def _install(self,account,candidate,stamp):
+        source,repo,infos,metas = candidate
         self.close()
         self.source,self.repo,self.account = source,repo,account
         self.infos,self.metas,self.stamp = infos,metas,stamp
         self.generation += 1
-        self.resources.clear()
+        self._refresh_retry_at, self._refresh_failures = 0, 0
+        for token,(kind,_) in list(self.resources.items()):
+            if kind!="account-avatar":
+                del self.resources[token]
 
     def state(self):
         if self.demo:
@@ -151,10 +188,41 @@ class DesktopBackend:
                     chats=chats,formats=self.preferences.formats,density=self.preferences.density,out=self.preferences.last_out or str(Path.home()/"Documents"))
 
     def refresh(self):
-        if self.account and self.account_stamp(self.account)!=self.stamp:
-            self._open(self.account,account_key(self.account))
-            return self.state()
-        return None
+        # 耗时的复制/解密/索引不占用活动会话锁，打开聊天不再排在刷新后面。
+        with self.lock:
+            if (not self.account or self._refreshing or self.tools.busy
+                    or time.monotonic()<self._refresh_retry_at):
+                return None
+            account,generation = self.account,self.generation
+            stamp = self.account_stamp(account)
+            if stamp==self.stamp:
+                return None
+            index = self.source.media_index
+            self._refreshing = True
+        try:
+            candidate = self._prepare(account,account_key(account),index)
+            with self.lock:
+                if self.account!=account or self.generation!=generation or self.tools.busy:
+                    candidate[1].close()
+                    candidate[0].close()
+                    return None
+                self._install(account,candidate,stamp)
+                return self.state()
+        except DatabaseBusyError:
+            with self.lock:
+                if self.account==account and self.generation==generation:
+                    self._refresh_failures = min(self._refresh_failures+1,4)
+                    self._refresh_retry_at = time.monotonic()+min(2**self._refresh_failures,30)
+            return None
+        except DecryptError:
+            with self.lock:
+                if self.account!=account or self.generation!=generation:
+                    return None
+                self._refresh_retry_at = time.monotonic()+30
+            raise UserError("本机记录暂时无法读取，当前聊天仍可浏览和导出；请重新选择账号重试。") from None
+        finally:
+            with self.lock:
+                self._refreshing = False
 
     def check_chat(self,chat):
         if chat not in {info.chat_id for info in self.infos}:
@@ -213,7 +281,7 @@ class DesktopBackend:
         kind,value = resource
         from PIL import Image
         try:
-            if kind in {"avatar","group"}:
+            if kind in {"avatar","account-avatar","group"}:
                 key = kind,value
                 if key not in self.portraits:
                     raw = None if self.demo else (avatars.fetch_group_avatar(value) if kind=="group" else avatars.fetch_avatar(value))
@@ -330,6 +398,8 @@ class DesktopBackend:
             raise UserError("不支持的操作")
         if method=="media":
             return self.media(**params)
+        if method=="refresh":
+            return self.refresh(**params)
         if method=="tool" and params.get("action") in {"queueState","queueCancel"}:
             return self.tools.call(**params)
         if self.tools.busy:
@@ -365,7 +435,8 @@ def main():
             response = dict(id=request.get("id"),error=text)
         send(response)
     try:
-        with ThreadPoolExecutor(max_workers=4,thread_name_prefix="qilu") as pool:
+        with (ThreadPoolExecutor(max_workers=4,thread_name_prefix="qilu") as pool,
+              ThreadPoolExecutor(max_workers=4,thread_name_prefix="qilu-media") as media_pool):
             for line in sys.stdin:
                 if len(line)>8*1024*1024:
                     continue
@@ -378,7 +449,8 @@ def main():
                         if request.get("method")=="tool" and request.get("params",{}).get("action") in {"queueState","queueCancel"}:
                             respond(request)
                         else:
-                            pool.submit(respond,request)
+                            target = media_pool if request.get("method")=="media" else pool
+                            target.submit(respond,request)
                 except ValueError:
                     pass
     finally:

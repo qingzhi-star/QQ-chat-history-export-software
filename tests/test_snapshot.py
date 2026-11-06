@@ -364,9 +364,16 @@ def test_snapshot_raises_when_source_never_stops_changing(tmp_path, monkeypatch)
         return out
 
     monkeypatch.setattr(sn, "copy_family", always_racy)
-    with pytest.raises(sn.SnapshotError):
+    with pytest.raises(sn.SnapshotBusyError):
         sn.snapshot(src, tmp_path / "work", attempts=3, use_shm_lock=False)
     assert list((tmp_path / "work").glob("nt_msg.db*")) == []
+
+
+def test_stable_invalid_copy_is_not_a_transient_busy_snapshot(tmp_path):
+    src=make_source(tmp_path/"src",valid=False,with_wal=False)
+    with pytest.raises(sn.SnapshotError) as error:
+        sn.snapshot(src,tmp_path/"work")
+    assert not isinstance(error.value,sn.SnapshotBusyError)
 
 
 # -------------------------------------------------- 主库内容校验（第 5 层之一）

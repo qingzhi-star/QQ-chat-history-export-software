@@ -83,7 +83,7 @@ def test_real_boot_discovery_signature_and_automatic_account_open(tmp_path,monke
     # autospec 使用现有接口签名，避免用 **kwargs 掩盖参数名错误。
     from unittest.mock import patch
     with patch.object(discover,"discover_accounts",autospec=True,side_effect=find):
-        monkeypatch.setattr("qqexport.electron_backend.read_identity",lambda account:Identity(account.uin,"合成账号"))
+        monkeypatch.setattr("qqexport.electron_backend.read_identity",lambda account,include_avatar=True:Identity(account.uin,"合成账号"))
         monkeypatch.setattr("qqexport.electron_backend.account_key",lambda account,allow_scan=False:b"synthetic")
         monkeypatch.setattr(ExportSource,"open",classmethod(lambda cls,account,key,**kwargs:src))
         value = DesktopBackend()
