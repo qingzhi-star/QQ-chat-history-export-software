@@ -106,8 +106,7 @@ class App:
             frames = traceback.extract_tb(exc.__traceback__)[-6:]
             where = " | ".join(
                 f"{Path(f.filename).name}:{f.lineno}" for f in frames)
-            log.error("%s: %s: %s @ %s", context, type(exc).__name__,
-                      self._redact(str(exc)), where)
+            log.error("%s: %s @ %s", context, type(exc).__name__, where)
         except Exception:
             pass
 
@@ -1487,8 +1486,9 @@ class ImageViewer(tk.Toplevel):
 
 
 def run_gui(*, data_dir: Path | None = None, uin: str | None = None) -> int:
+    from qqexport.product_gui import ProductApp
     root = tk.Tk()
-    app = App(root, data_dir=data_dir, uin=uin)
+    app = ProductApp(root, data_dir=data_dir, uin=uin)
     root.report_callback_exception = (
         lambda exc, value, tb: app._log_exception("tk", value))
     root.protocol("WM_DELETE_WINDOW", app.close)

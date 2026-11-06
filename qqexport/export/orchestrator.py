@@ -43,6 +43,7 @@ class ExportOptions:
     start_ts: int | None = None
     end_ts: int | None = None
     message_ids: set[int] | None = None
+    allow_network: bool = False
 
 
 def folder_name(info: ChatInfo) -> str:
@@ -148,7 +149,7 @@ def _fetch_remote_image(url: str,
     return uri
 
 
-def _inline_images(messages: list[Message]) -> list[Message]:
+def _inline_images(messages: list[Message], *, allow_network=False) -> list[Message]:
     cache: dict[Path, str | None] = {}
     remote_cache: dict[str, str | None] = {}
     out: list[Message] = []
@@ -170,7 +171,7 @@ def _inline_images(messages: list[Message]) -> list[Message]:
                         except OSError:
                             cache[key] = None
                     uri = cache[key]
-                elif m.remote_url:
+                elif m.remote_url and allow_network:
                     uri = _fetch_remote_image(m.remote_url, remote_cache)
                 if uri:
                     segs.append(replace(seg, media=replace(
@@ -275,7 +276,7 @@ def export_chats(source: ExportSource, chat_ids: list[str],
         messages = list(source.iter_messages(chat_id))
         messages = [m for m in messages if not m.is_system]
         messages = _expand_markdown_images(
-            messages, fetch=bool(formats & {"html", "pdf"}))
+            messages, fetch=opts.allow_network and bool(formats & {"html", "pdf"}))
         if opts.message_ids is not None:
             wanted = set(opts.message_ids)
             messages = [m for m in messages if m.msg_id in wanted]
@@ -311,8 +312,8 @@ def export_chats(source: ExportSource, chat_ids: list[str],
                 if file_refs:
                     copied = media_copy.copy_media(file_refs, work / "media")
                     rel = copied.rel_by_source
-                relinked = _inline_images(_relink(messages, rel))
-                if not source.meta.get("synthetic"):
+                relinked = _inline_images(_relink(messages, rel), allow_network=opts.allow_network)
+                if opts.allow_network and not source.meta.get("synthetic"):
                     relinked = avatars.add_avatars(relinked)
                 nt_data = Path(source.meta.get("nt_data") or
                                avatars.nt_data_dir(source.msg_db))

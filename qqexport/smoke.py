@@ -6,12 +6,12 @@ from pathlib import Path
 
 
 def run_smoke(report: Path) -> int:
-    root = None
+    root = app = None
     result = {"ok": False}
     try:
         import tkinter as tk
         from qqexport import __version__
-        from qqexport.gui import App
+        from qqexport.product_gui import ProductApp as App
 
         class SmokeApp(App):
             def _load_chats(self):
@@ -29,6 +29,8 @@ def run_smoke(report: Path) -> int:
         result["error"] = type(exc).__name__
         return 1
     finally:
-        if root is not None:
+        if app is not None:
+            app.close()
+        elif root is not None:
             root.destroy()
         report.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
