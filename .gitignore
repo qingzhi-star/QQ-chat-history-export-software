@@ -16,3 +16,8 @@ keys.json
 
 # fixture：需人工确认不含隐私后才用 git add -f 提交
 tests/fixtures/*.bin
+
+# Electron dependencies and local test reports
+desktop/node_modules/
+desktop/test-results/
+desktop/playwright-report/

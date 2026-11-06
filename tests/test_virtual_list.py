@@ -94,9 +94,7 @@ def test_wheel_moves_away_from_bottom_in_both_modes():
             positions = [view.canvas.canvasy(0)]
             anchors = [view.anchor()]
             for _ in range(4):
-                row = next(iter(view.rows.values()))[0]
-                widget = row.renderer.sel_rows[0]["bg"][4] if selecting else row.normal
-                widget.event_generate("<MouseWheel>",delta=120)
+                view.canvas.event_generate("<MouseWheel>",delta=120)
                 root.update()
                 positions.append(view.canvas.canvasy(0))
                 anchors.append(view.anchor())
@@ -360,24 +358,72 @@ def test_classic_rendering_assets_and_last_line_are_visible(tmp_path):
         for _ in range(4):
             root.update()
         row = view.rows[0][0]
-        assert row.normal.tag_cget("bubble_self","background")=="#95ec69"
-        assert row.normal.tag_cget("bubble","background")=="#ffffff"
-        assert row.normal.tag_cget("name_self","justify")=="right"
+        canvas = view.canvas
+        def texts():
+            return [canvas.itemcget(item,"text") for item in canvas.find_withtag(row.tag) if canvas.type(item)=="text"]
+        def polygons():
+            return [canvas.itemcget(item,"fill") for item in canvas.find_withtag(row.tag) if canvas.type(item)=="polygon"]
+        assert "#95ec69" in polygons()
         assert len(row.photos)==2
-        last = row.normal.search("末尾文本","1.0")
-        box = row.normal.dlineinfo(last)
-        assert box and box[1]+box[3]<=row.normal.winfo_height()
-        assert row.normal.get("1.0","end").count("2026-11-06")==1
+        assert any("末尾文本" in text for text in texts())
+        assert texts().count("2026-11-06")==1
+        box = canvas.bbox(row.tag)
+        assert box and box[3]<=row.y+row.measure_height()+1
         anchor = view.anchor()
         view.selection(True,{0})
         root.update()
-        selection = row.renderer.sel_rows[0]
-        assert selection["bg"][0].cget("bg")=="#e6f0ff"
-        assert len(row.renderer._sel_photos)==2
-        assert not row.normal.winfo_ismapped()
-        assert selection["bg"][4].cget("text")=="合成  09:00:00"
+        assert "#95ec69" in polygons()
+        assert len(row.photos)==2
+        assert any("09:00:00" in text for text in texts())
+        backgrounds = [canvas.itemcget(item,"fill") for item in canvas.find_withtag(row.tag) if canvas.type(item)=="rectangle"]
+        assert "#e6f0ff" in backgrounds
+        assert not any("[图片]" in text for text in texts())
         view.selection(False,set())
         root.update()
-        assert row.normal.winfo_ismapped() and view.anchor()[0]==anchor[0]
+        assert view.anchor()[0]==anchor[0]
+
+    finally:
+        root.destroy()
+
+
+def test_sparse_pages_collapse_filtered_rows_and_keep_rich_selection(tmp_path):
+    from types import SimpleNamespace
+    from PIL import Image
+    from qqexport.export.model import MediaRef
+    from qqexport.qq import avatars
+    root = create_root()
+    root.geometry("800x600")
+    emoji = tmp_path/"emoji.png"
+    Image.new("RGBA",(180,180),"yellow").save(emoji)
+    import unittest.mock
+    quote = Message(1,100,None,None,"引用者",False,[Segment("text","引用正文")])
+    message = Message(2,101,None,None,"回复者",False,[Segment("reply",quoted=quote),
+        Segment("text","回复正文"),Segment("face",face_id=1),Segment("face",face_id=1),
+        Segment("image",media=MediaRef("image",missing=True))])
+    view = None
+    def request(offset,size):
+        view.loaded(offset,[(0,message),(90,message)] if offset==0 else [])
+    selected = []
+    view = VirtualMessages(root,request,selected.append)
+    view.source = SimpleNamespace(meta={"nt_data":tmp_path})
+    view.pack(fill="both",expand=True)
+    try:
+        with unittest.mock.patch.object(avatars,"emoji_path",return_value=emoji):
+            view.reset(91)
+            root.update()
+            assert all(view.heights.values[i]==0 for i in range(1,90))
+            assert view.heights.prefix(90)==view.rows[0][0].measure_height()
+            for mode in (False,True,False):
+                view.selection(mode,set())
+                root.update()
+                row = view.rows[0][0]
+                items = view.canvas.find_withtag(row.tag)
+                texts = [view.canvas.itemcget(item,"text") for item in items if view.canvas.type(item)=="text"]
+                assert "引用者" in texts and "引用正文" in texts and "回复正文" in texts
+                assert "[图片](本机未缓存)" in texts and "[表情]" not in texts
+                assert len([item for item in items if view.canvas.type(item)=="image"])==2
+                assert next(iter(view.emoji_photos.values())).width()==28
+                assert view.heights.prefix(90)==row.measure_height()
+            assert not view.canvas.winfo_children()
     finally:
         root.destroy()

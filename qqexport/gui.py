@@ -767,7 +767,7 @@ class App:
                                        lambda _e: self.text.configure(cursor=""))
                     self.text.insert("end", "\n")
                 else:
-                    self.text.insert("end", "[图片]（本机无原图）", "media")
+                    self.text.insert("end", "[图片](本机未缓存)", "media")
                 continue
             if seg.kind == "file":
                 self.text.insert("end", txt.segment_text(seg), "media")
@@ -786,7 +786,10 @@ class App:
         if path is None:
             return None
         try:
-            photo = tk.PhotoImage(file=str(path))
+            with Image.open(path) as bitmap:
+                bitmap = bitmap.convert("RGBA")
+                bitmap.thumbnail((28,28),Image.Resampling.LANCZOS)
+                photo = ImageTk.PhotoImage(bitmap,master=self.text)
         except tk.TclError:
             return None
         self._emoji[face_id] = photo

@@ -524,8 +524,7 @@ class ProductApp(App):
                 self._thumbs.move_to_end(key)
                 while len(self._thumbs)>64:
                     self._thumbs.popitem(last=False)
-                if gen == self._render_gen:
-                    self.virtual.image_ready(index,image,key)
+            self.virtual.image_ready(index,image,key)
         future = self.tasks.submit(decode,ready,self._error)
         future.add_done_callback(lambda _:release())
 

@@ -6,7 +6,7 @@ from datetime import datetime
 import tkinter as tk
 from tkinter import ttk
 
-from qqexport.classic_row import MessageRow, media_key
+from qqexport.canvas_row import MessageRow
 
 
 class HeightIndex:
@@ -23,7 +23,7 @@ class HeightIndex:
         return result
 
     def set(self, index, height):
-        height = max(30, int(height))
+        height = max(0, int(height))
         delta = height - self.values[index]
         if not delta:
             return
@@ -73,7 +73,7 @@ class VirtualMessages(ttk.Frame):
         self.selecting, self.selected, self.highlight = False, set(), None
         self._draw_pending = False
         self._drawing, self._needs_redraw, self._last_scroll = False, False, None
-        self.canvas = tk.Canvas(self, bg="white", highlightthickness=0, yscrollincrement=24)
+        self.canvas = tk.Canvas(self, bg="white", highlightthickness=0, yscrollincrement=1)
         self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.scroll)
         self.canvas.configure(yscrollcommand=self.scrolled)
         self.canvas.pack(side="left", fill="both", expand=True)
@@ -87,8 +87,7 @@ class VirtualMessages(ttk.Frame):
         self.pending.clear()
         self._stale_pages.clear()
         for index, (row, item) in list(self.rows.items()):
-            self.canvas.delete(item)
-            row.place_forget()
+            row.hide()
             row.index = -1
             self.free.append(row)
         self.rows.clear()
@@ -121,9 +120,18 @@ class VirtualMessages(ttk.Frame):
 
     def loaded(self, offset, messages):
         self.pending.discard(offset)
+        anchor,bottom = self.anchor(),self.at_bottom()
         previous = self.pages.get(offset,{})
         self.pages[offset] = {index:previous[index] if previous.get(index)==message else message
                               for index,message in messages}
+        for index in range(offset,min(offset+self.page_size,self.count)):
+            if index not in self.pages[offset]:
+                self.heights.set(index,0)
+            elif self.heights.values[index]==0:
+                self.heights.set(index,self.heights.default)
+        if not self._drawing:
+            self._restore_view = anchor,bottom
+        self._geometry_dirty = True
         self._stale_pages.discard(offset)
         self.pages.move_to_end(offset)
         while len(self.pages) > self.max_pages:
@@ -164,7 +172,7 @@ class VirtualMessages(ttk.Frame):
     def selection(self, enabled, selected):
         self.selecting, self.selected = enabled, selected
         self.canvas.configure(highlightthickness=0 if enabled else 1)
-        self.canvas.configure(yscrollincrement=0 if enabled else 24)
+        self.canvas.configure(yscrollincrement=1)
         self._fine_wheel = False
         self.schedule()
 
@@ -180,20 +188,13 @@ class VirtualMessages(ttk.Frame):
                 self.schedule()
 
     def wheel(self, event):
-        fine = abs(event.delta)<120
-        if fine!=self._fine_wheel:
-            self.canvas.configure(yscrollincrement=1 if fine else 0 if self.selecting else 24)
-            self._fine_wheel = fine
-        if fine:
-            pixels = -event.delta*72/120+self._fine_wheel_remainder
-            movement = int(pixels)
-            self._fine_wheel_remainder = pixels-movement
-        else:
-            units = -event.delta/120*(1 if self.selecting else 3)+self._wheel_remainder
-            movement = int(units)
-            self._wheel_remainder = units-movement
-        self.canvas.yview_scroll(movement,"units")
-        self.schedule()
+        pixels = -event.delta*72/120+self._fine_wheel_remainder
+        movement = int(pixels)
+        self._fine_wheel_remainder = pixels-movement
+        first,last = self.canvas.yview()
+        if movement<0 and first>0 or movement>0 and last<1:
+            self.canvas.yview_scroll(movement,"units")
+            self.schedule()
         return "break"
 
     def schedule(self):
@@ -216,47 +217,45 @@ class VirtualMessages(ttk.Frame):
             self.schedule()
 
     def _take_row(self,message):
-        if self.selecting and message is not None:
-            layout = tuple(segment.kind for segment in message.segments)
-            for position in range(len(self.free)-1,-1,-1):
-                candidate = self.free[position]
-                if (candidate.renderer.sel_rows and candidate.message is not None
-                        and tuple(segment.kind for segment in candidate.message.segments)==layout):
-                    return self.free.pop(position)
-            # 为不同内容结构保留少量原版控件模板，避免图文交替时反复销毁重建。
-            if len(self.rows)+len(self.free)<60:
-                return MessageRow(self.canvas,self)
         return self.free.pop() if self.free else MessageRow(self.canvas,self)
 
     def _render(self):
         if not self.count or not self.winfo_exists():
             return
-        anchor, offset = self.anchor()
-        bottom = self.at_bottom()
+        (anchor,offset),bottom = getattr(self,"_restore_view",(self.anchor(),self.at_bottom()))
+        if hasattr(self,"_restore_view"):
+            del self._restore_view
         width = max(200,self.canvas.winfo_width())
         first = max(0,anchor-3)
         last = min(self.count, self.heights.locate(self.canvas.canvasy(self.canvas.winfo_height()))+5, first+60)
-        wanted = set(range(first,last))
+        wanted = {i for i in range(first,last) if self.heights.values[i]>0}
         dirty = getattr(self,"_geometry_dirty",False) or getattr(self,"_width",None)!=width
         self._geometry_dirty = False
         self._width = width
         for index in list(self.rows):
             if index not in wanted:
                 row,item = self.rows.pop(index)
-                self.canvas.delete(item)
+                row.hide()
                 self.free.append(row)
                 dirty = True
         for index in sorted(wanted):
             message = self.message(index)
+            if self.heights.values[index]==0:
+                if index in self.rows:
+                    row,_ = self.rows.pop(index)
+                    row.hide()
+                    self.free.append(row)
+                dirty = True
+                continue
             if index not in self.rows:
                 row = self._take_row(message)
-                item = self.canvas.create_window(0,self.heights.prefix(index),window=row,anchor="nw",width=width)
+                item = row.tag
                 self.rows[index] = (row,item)
                 dirty = True
             row,item = self.rows[index]
             if row.show(index,message,width):
                 dirty = True
-                self.canvas.itemconfigure(item,width=width)
+
         if not dirty:
             return
         for index,(row,item) in self.rows.items():
@@ -264,7 +263,7 @@ class VirtualMessages(ttk.Frame):
         total = max(self.heights.prefix(self.count),self.canvas.winfo_height())
         self.canvas.configure(scrollregion=(0,0,width,total))
         for index,(row,item) in self.rows.items():
-            self.canvas.coords(item,0,self.heights.prefix(index))
+            row.move_to(self.heights.prefix(index))
         if bottom:
             self.canvas.yview_moveto(1)
         else:
@@ -272,11 +271,11 @@ class VirtualMessages(ttk.Frame):
             self.canvas.yview_moveto((self.heights.prefix(anchor)+offset)/max(1,total))
         next_first = max(0,self.anchor()[0]-3)
         next_last = min(self.count,self.heights.locate(self.canvas.canvasy(self.canvas.winfo_height()))+5,next_first+60)
-        if wanted!=set(range(next_first,next_last)):
+        if set(self.rows)!={i for i in range(next_first,next_last) if self.heights.values[i]>0}:
             self._needs_redraw = True
 
     def image_ready(self, index, image, key=None):
-        if index not in self.rows or image is None:
+        if index not in self.rows:
             return
         row,_ = self.rows[index]
         if key is not None and key not in row.requested:
@@ -284,13 +283,16 @@ class VirtualMessages(ttk.Frame):
         if key is None:
             key = next(iter(row.requested),None)
         row.image_ready(key,image)
+        for other,_ in self.rows.values():
+            if key in other.requested:
+                other._state = None
         self._geometry_dirty = True
         self.schedule()
 
     def avatar_ready(self,key):
         for row,_ in self.rows.values():
             if row.message and self.avatar_key(row.message)==key:
-                row._state,row._selection_key,row._measured_height = None,None,None
+                row._state = None
                 row.renderer._avatars.clear()
         self._geometry_dirty = True
         self.schedule()
