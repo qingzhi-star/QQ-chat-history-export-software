@@ -95,7 +95,8 @@ def smoke(release: Path, iscc: Path) -> dict:
     if registry_exists():
         raise RuntimeError("已有同名冒烟安装，拒绝覆盖")
     br.check_toolchain(iscc=iscc)
-    result = {"schema_version": 1, "version": version, "checks": {}}
+    result = {"schema_version": 1, "version": version,
+              "build_manifest_sha256": br.sha256(release / "build-manifest.json"), "checks": {}}
     with tempfile.TemporaryDirectory(prefix="qqexport-smoke-") as temp:
         base = Path(temp)
         env = dict(os.environ, QQEXPORT_HOME=str(base / "home"), LOCALAPPDATA=str(base / "local"),

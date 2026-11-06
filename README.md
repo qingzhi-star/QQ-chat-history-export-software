@@ -1,7 +1,7 @@
 # QQ 聊天记录导出
 
 <!-- version:start -->
-当前源码版本：**0.1.0**。
+当前源码版本：**0.1.1rc1**。
 <!-- version:end -->
 
 在 Windows 上导出**本机已登录 QQ NT 账号**的聊天记录，支持 TXT、PDF、HTML，

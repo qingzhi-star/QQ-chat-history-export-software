@@ -1,50 +1,59 @@
 name: release
-
 on:
   push:
     tags: ["v*"]
-
+  workflow_dispatch:
 permissions:
   contents: write
-
 jobs:
   test:
-    name: py${{ matrix.python-version }} / windows
     runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.14"]
+        python-version: ["3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install
-        run: python -m pip install -e ".[dev]"
-      - name: Test
-        run: python -m pytest -q
-      - name: Privacy audit
-        run: python tools/check_privacy.py --audit
-
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m pytest -q
+      - run: python tools/check_privacy.py --audit
   build:
-    name: build + GitHub Release
     needs: test
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.14"
-      - name: Build sdist + wheel
+          python-version-file: .python-version
+      - name: Install pinned Inno Setup
+        shell: pwsh
         run: |
-          python -m pip install "build>=1"
-          python -m build
-      - name: Verify wheel contents
-        run: python tools/check_wheel.py dist
-      - name: Publish GitHub Release
+          $cfg = Get-Content build-toolchain.json | ConvertFrom-Json
+          $installer = Join-Path $env:RUNNER_TEMP 'inno-setup.exe'
+          Invoke-WebRequest $cfg.inno_installer_url -OutFile $installer
+          if ((Get-FileHash $installer -Algorithm SHA256).Hash.ToLower() -ne $cfg.inno_installer_sha256) { throw 'Inno installer checksum mismatch' }
+          $dest = Join-Path $env:RUNNER_TEMP 'inno'
+          $proc = Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/DIR=$dest") -WindowStyle Hidden -Wait -PassThru
+          if ($proc.ExitCode -ne 0) { throw 'Inno install failed' }
+      - name: Build locked distribution
+        run: python tools/build_release.py --out dist/release --iscc "$env:RUNNER_TEMP/inno/ISCC.exe"
+      - name: Smoke test
+        run: python tools/smoke_release.py dist/release --iscc "$env:RUNNER_TEMP/inno/ISCC.exe" --report build/smoke-report.json
+      - name: Release gate
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          RELEASE_EVIDENCE_JSON: ${{ vars.RELEASE_EVIDENCE_JSON }}
+        run: python tools/release_gate.py dist/release --smoke build/smoke-report.json --tag $env:GITHUB_REF_NAME
+      - name: Publish exactly two assets
+        if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $assets = Get-ChildItem dist | ForEach-Object { $_.FullName }
-          gh release create $env:GITHUB_REF_NAME @assets --generate-notes --title "qqexport $env:GITHUB_REF_NAME"
+          $manifest = Get-Content dist/release/build-manifest.json | ConvertFrom-Json
+          $assets = $manifest.artifacts | ForEach-Object { Join-Path 'dist/release' $_.path }
+          $flags = @()
+          if ($manifest.version -match 'rc[0-9]+$') { $flags += '--prerelease' }
+          gh release create $env:GITHUB_REF_NAME @assets @flags --title $manifest.release_title --notes-file dist/release/release-notes.md --verify-tag
