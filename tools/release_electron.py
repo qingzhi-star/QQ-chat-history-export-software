@@ -77,34 +77,15 @@ def validate(release,smoke,version,commit,source_sha):
 
 
 def notes(manifest):
-    version = manifest["version"]
-    text = f"# v{version}\n\n"
-    text += "适用于 **Windows 11 x64**。Windows 10 和其他架构未列入本版已验证支持范围。\n\n"
-    text += "## 下载与运行\n\n- `Qilu-Setup-"+version+"-x64.exe`：安装版，带卸载程序。\n"
-    text += "- `Qilu-"+version.replace("rc","-rc.")+"-x64.zip`：便携版，完整解压后运行 `绮录QQ聊天记录导出软件.exe`。\n\n"
-    text += "无需安装 Python 或 Node.js；请保留主程序旁的 DLL、locales 和 resources。PDF 由 Electron 内置打印引擎生成。\n\n"
-    if version in {"0.3.1","0.4.0"}:
-        text += "## 本次修复\n\n- QQ 写库导致的快照忙自动重试，后台刷新失败保留可用聊天；真正解密失败仍明确提示。\n"
-        text += "- 刷新准备不占用消息读取锁，旧账号结果不会覆盖新账号；重复消息页使用有界解析缓存。\n"
-        text += "- 断网头像请求不阻塞消息读取，启动不再等待账号头像网络请求。\n"
-        text += "- 按用户要求固定“更多功能”标题和右上角叉号，只滚动下方列表，移除底部关闭按钮；其余 UI 保持原样。\n\n"
-        text += "离线导出需要本机已有该数据库的有效口令。曾在 QQ 登录过但从未取得密钥的历史账号，不能仅凭加密 `.db` 文件离线解密，本版不承诺此能力。\n\n"
-    if version=="0.4.0":
-        text += "## 新增隐私与读取能力\n\n- 每次启动先展示隐私全文：背景虚化，同意后才启动内核，拒绝或 Esc 退出。主进程阻断同意前的数据操作。\n"
-        text += "- 敏感信息处理单独确认；联网头像独立可选、默认关闭。软件内附全文，无网也可阅读。\n"
-        text += "- 消息库、联系人、群资料及媒体索引四线程准备；随机滚动优先当前视口，32 条分页、最多两个消息请求在途，丢弃未发送的过期位置请求。\n"
-        text += "- [绮录主页](https://qingzhi-star.github.io/QL-qq-chat-history-exporter/) · [隐私条款](https://qingzhi-star.github.io/QL-qq-chat-history-exporter/privacy.html) · [讨论区](https://github.com/qingzhi-star/QL-qq-chat-history-exporter/discussions)。\n\n"
-    text += "## 本版功能\n\n- Electron 双栏界面，沿用绮录名称与 D 图标，圆角按钮和头像。\n"
-    text += "- 自动准备与切换本机账号，会话按最新消息排序并更新。\n"
-    text += "- 虚拟列表、行内表情、图片预览及系统默认查看器、引用卡片、文件名。\n"
-    text += "- 整行选择、日期范围、TXT/HTML/PDF 导出。\n"
-    text += "- 内置搜索、批量/增量导出、队列恢复、加密归档、资料库、缺失媒体检测、缓存设置和计划文件生成。\n\n"
-    text += "## 验证与范围\n\n当前提交已完成自动测试、安装/启动/卸载、无系统 Python/Node 运行、冻结内核归档/多格式导出及源数据字节不变检查。"
-    text += "滚动采样使用 200 个合成会话和十万条消息，结果仅代表验收机器；实际大库和冷图片加载速度取决于设备及缓存。"
-    text += "计划功能生成默认禁用的 XML/JSON，由用户在 Windows 任务计划程序中导入启用。"
-    text += "本版未配置代码签名证书。\n\n## SHA-256\n\n```text\n"
-    text += "".join(f"{item['sha256']}  {item['name']}\n" for item in manifest["artifacts"])+"```\n"
-    text += f"\n源码提交：`{manifest['source_commit']}`。\n"
+    version=manifest["version"]
+    specific=br.ROOT/"docs/releases"/(version+".md")
+    if specific.is_file():
+        return specific.read_text(encoding="utf-8")
+    text="## 下载与运行\n\n"
+    text+=f"- 安装版：`Qilu-Setup-{version}-x64.exe`，包含卸载程序。\n"
+    text+=f"- 便携版：`Qilu-{version.replace('rc','-rc.')}-x64.zip`，完整解压后运行 `绮录QQ聊天记录导出软件.exe`。\n"
+    text+="- 无需 Python 或 Node.js；保留 DLL、`locales` 和 `resources`。\n\n"
+    text+="## 支持的系统范围\n\n已验证 Windows 11 x64。Windows 10、其他架构和其他操作系统未列入已验证支持范围。\n"
     return text
 
 

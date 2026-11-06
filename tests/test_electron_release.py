@@ -33,6 +33,16 @@ def test_electron_stable_requires_current_bound_complete_evidence(tmp_path):
     assert any("验收" in value for value in gate.validate(tmp_path,smoke,"0.3.0","synthetic","source"))
 
 
+def test_release_notes_only_use_requested_user_sections():
+    import re
+    for version in ("0.4.0","0.5.0"):
+        text=gate.notes({"version":version})
+        headings=re.findall(r"^## (.+)$",text,re.M)
+        assert headings[0]=="下载与运行" and headings[-1]=="支持的系统范围"
+        assert set(headings)<={"下载与运行","功能更新","问题修复","支持的系统范围"}
+        assert "## SHA-256" not in text and "## 验证与范围" not in text
+
+
 @pytest.mark.parametrize("check",sorted(gate.CHECKS))
 def test_electron_release_rejects_unverified_checks(tmp_path,check):
     smoke = release(tmp_path)

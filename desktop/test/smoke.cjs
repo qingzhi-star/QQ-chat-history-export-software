@@ -18,6 +18,7 @@ const os = require('node:os');
   const report = { packaged: Boolean(process.env.QILU_PACKAGED_EXE), systemRuntimeRemoved: Boolean(process.env.QILU_PACKAGED_EXE), errors: [] };
   try {
     const page = await app.firstWindow();
+    await app.evaluate(({BrowserWindow})=>{const window=BrowserWindow.getAllWindows()[0];window.show();window.setAlwaysOnTop(true);window.focus();});
     page.on('pageerror', error=>report.errors.push(error.message));
     await page.locator('#privacy-dialog').waitFor();
     assert.equal(await page.locator('.chat').count(),0);
@@ -67,17 +68,18 @@ const os = require('node:os');
     const metrics = await page.evaluate(async()=>{
       const viewport=document.getElementById('messages');
       const space=document.getElementById('message-space');
-      const durations=[],gaps=[];let last=performance.now();let maxNodes=0;
+      const durations=[],gaps=[],frameTimes=[];let last=performance.now(),lastFrame=null;let maxNodes=0;
       for(let i=0;i<240;i++){
         viewport.scrollTop+=i<120?72:-72;
-        await new Promise(resolve=>requestAnimationFrame(()=>setTimeout(resolve,0)));
+        const frameTime=await new Promise(resolve=>requestAnimationFrame(timestamp=>setTimeout(()=>resolve(timestamp),0)));
+        if(lastFrame!==null)frameTimes.push(frameTime-lastFrame);lastFrame=frameTime;
         const now=performance.now();durations.push(now-last);last=now;
         maxNodes=Math.max(maxNodes,space.childElementCount);
         const rows=[...space.children].filter(row=>!row.textContent.includes('正在加载')).map(row=>({index:Number(row.dataset.index),box:row.getBoundingClientRect()})).sort((a,b)=>a.index-b.index);
         for(let j=1;j<rows.length;j++)if(rows[j].index===rows[j-1].index+1)gaps.push(rows[j].box.top-rows[j-1].box.bottom);
       }
-      durations.sort((a,b)=>a-b);
-      return {frameP50:durations[120],frameP95:durations[228],frameMax:durations[239],maxNodes,maxGap:Math.max(0,...gaps)};
+      durations.sort((a,b)=>a-b);frameTimes.sort((a,b)=>a-b);
+      return {frameP50:frameTimes[119],frameP95:frameTimes[227],frameMax:frameTimes[238],timerIntervalP95:durations[228],maxNodes,maxGap:Math.max(0,...gaps)};
     });
     assert.ok(metrics.maxNodes<=60,JSON.stringify(metrics));
     assert.ok(metrics.maxGap<5,JSON.stringify(metrics));
@@ -120,15 +122,16 @@ const os = require('node:os');
     await page.locator('.quote').first().waitFor();
     await page.screenshot({path:path.join(root,'build/electron-synthetic-messages.png')});
     const sidebar = await page.locator('#chats').evaluate(async element=>{
-      let maxNodes=0;const frames=[];let last=performance.now();
+      let maxNodes=0;const frames=[],frameTimes=[];let last=performance.now(),lastFrame=null;
       for(let i=0;i<120;i++){
         element.scrollTop+=i<60?72:-72;
-        await new Promise(resolve=>requestAnimationFrame(()=>setTimeout(resolve,0)));
+        const frameTime=await new Promise(resolve=>requestAnimationFrame(timestamp=>setTimeout(()=>resolve(timestamp),0)));
+        if(lastFrame!==null)frameTimes.push(frameTime-lastFrame);lastFrame=frameTime;
         const now=performance.now();frames.push(now-last);last=now;
         maxNodes=Math.max(maxNodes,element.querySelectorAll('.chat').length);
       }
-      element.scrollTop=-100;frames.sort((a,b)=>a-b);
-      return {p50:frames[60],p95:frames[114],maxNodes,top:element.scrollTop};
+      element.scrollTop=-100;frames.sort((a,b)=>a-b);frameTimes.sort((a,b)=>a-b);
+      return {p50:frameTimes[59],p95:frameTimes[113],timerIntervalP95:frames[114],maxNodes,top:element.scrollTop};
     });
     assert.ok(sidebar.maxNodes<40);assert.equal(sidebar.top,0);report.sidebar=sidebar;
     await page.locator('#switch-account').click();
@@ -163,6 +166,7 @@ const os = require('node:os');
     const declined=await electron.launch({executablePath,args:process.env.QILU_PACKAGED_EXE?[]:[path.join(root,'desktop')],
       env:{...appEnv,QQEXPORT_HOME:path.join(home,'declined-core'),QILU_TEST_HOME:path.join(home,'declined-electron')},timeout:45000});
     const declinedProcess=declined.process();
+    await declined.evaluate(({BrowserWindow})=>{const window=BrowserWindow.getAllWindows()[0];window.show();window.setAlwaysOnTop(true);window.focus();});
     try{
       const refusal=await declined.firstWindow();await refusal.locator('#privacy-dialog').waitFor();
       await Promise.all([declined.waitForEvent('close'),refusal.locator('#privacy-decline').click()]);
@@ -171,7 +175,7 @@ const os = require('node:os');
       report.privacyDeclined=true;
     }finally{if(declinedProcess.exitCode===null)await declined.close();}
     assert.deepEqual(report.errors,[]);
-    report.pass=true;
+    report.frameClock='requestAnimationFrame DOMHighResTimeStamp; timer intervals retained separately';report.pass=true;
     await fs.mkdir(path.join(root,'build'),{recursive:true});
     const output=path.join(root,'build',process.env.QILU_PACKAGED_EXE?'electron-packaged-smoke.json':'electron-ui-smoke.json');
     await fs.writeFile(output,JSON.stringify(report,null,2));

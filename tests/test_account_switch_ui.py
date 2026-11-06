@@ -102,9 +102,12 @@ def test_profile_button_selects_switches_and_cancels(tmp_path,monkeypatch):
         monkeypatch.setattr(keystore.KeyStore,"save",lambda self,uin,key:saved.append(uin))
         responsive = []
         def heartbeat():
+            if not scans:
+                root.after(10,heartbeat)
+                return
             responsive.append(app.account_button.instate(["disabled"]))
             release.set()
-        root.after(100,heartbeat)
+        root.after(10,heartbeat)
         choose(0)
         assert scans==[True] and saved==[accounts[0].uin]
         assert responsive==[True]
