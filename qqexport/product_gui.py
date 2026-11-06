@@ -103,6 +103,8 @@ class ProductApp(App):
         self.status.configure(text=f"操作失败：{type(exc).__name__}", foreground="#b00")
 
     def _submit(self, session, work, done, *, gen=None, error=None):
+        if self._closed:
+            return
         try:
             release = session.pin()
         except RuntimeError as exc:
@@ -365,7 +367,11 @@ class ProductApp(App):
             job.cancel.set()
         for child in self.root.winfo_children():
             if isinstance(child,tk.Toplevel):
-                child.withdraw()
+                closer = getattr(child,"close",None)
+                if callable(closer):
+                    closer()
+                else:
+                    child.destroy()
             cancel = getattr(child,"cancel",None)
             if hasattr(cancel,"set"):
                 cancel.set()

@@ -26,6 +26,7 @@ class ExportReport:
     messages_ok: int = 0
     messages_degraded: int = 0
     messages_failed: int = 0
+    messages_added: int | None = None
     segments_by_kind: dict[str, int] = field(default_factory=dict)
     unknown_fields: dict[int, int] = field(default_factory=dict)
     media_referenced: int = 0
@@ -62,6 +63,8 @@ class ExportReport:
         if self.wal_frames:
             lines.append(f"WAL {self.wal_frames} 帧（最后 commit "
                          f"{self.wal_last_commit_frame}）")
+        if self.messages_added is not None:
+            lines.append(f"本轮新增 {self.messages_added} 条")
         if self.pdf_error:
             lines.append(f"PDF：{self.pdf_error}")
         lines.extend(f"警告：{w}" for w in self.warnings)

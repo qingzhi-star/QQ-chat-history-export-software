@@ -31,8 +31,14 @@ class BatchDialog(tk.Toplevel):
                 self.tree.selection_add(str(i))
         self.remember = tk.BooleanVar(value=False)
         self.manifest = tk.BooleanVar(value=True)
+        self.incremental = tk.BooleanVar(value=False)
+        self.rebuild = tk.BooleanVar(value=False)
         ttk.Checkbutton(self,text="保留队列以便重启后恢复（仅会话标识与输出参数）",variable=self.remember).pack(anchor="w",padx=10,pady=5)
         ttk.Checkbutton(self,text="生成导出清单和文件校验值",variable=self.manifest).pack(anchor="w",padx=10)
+        ttk.Checkbutton(self,text="增量备份（保存明文消息快照与媒体，后续只追加新消息）",variable=self.incremental,
+                        command=self._incremental_mode).pack(anchor="w",padx=10,pady=4)
+        self.rebuild_button = ttk.Checkbutton(self,text="全量重建已有增量备份（覆盖原导出）",variable=self.rebuild,state="disabled")
+        self.rebuild_button.pack(anchor="w",padx=10)
         buttons = ttk.Frame(self,padding=10)
         buttons.pack(fill="x")
         ttk.Button(buttons,text="全选",command=lambda:self.tree.selection_set(self.tree.get_children())).pack(side="left")
@@ -43,6 +49,11 @@ class BatchDialog(tk.Toplevel):
     def selected(self):
         ids = [self.infos[int(i)].chat_id for i in self.tree.selection()]
         self.choose(ids)
+
+    def _incremental_mode(self):
+        self.rebuild_button.state(["!disabled"] if self.incremental.get() else ["disabled"])
+        if not self.incremental.get():
+            self.rebuild.set(False)
 
     def all(self):
         if messagebox.askyesno("全部会话","将导出当前账号全部会话，是否继续？",parent=self):
@@ -57,8 +68,10 @@ class BatchDialog(tk.Toplevel):
             if session.retired:
                 messagebox.showinfo("数据源已更新","请重新打开批量导出以使用当前会话列表。",parent=self)
                 return
+            if self.rebuild.get() and not messagebox.askyesno("全量重建","将完整替换选中会话的已有导出，原 QQ 数据不变。是否继续？",parent=self):
+                return
             job = ExportJob(session.source.account_uin,ids,
-                orchestrator.ExportOptions(formats=formats,out_base=out),write_manifest=self.manifest.get())
+                orchestrator.ExportOptions(formats=formats,out_base=out,incremental=self.incremental.get(),rebuild=self.rebuild.get()),write_manifest=self.manifest.get())
             if self.remember.get():
                 job.checkpoint = config.app_dir()/"jobs"/(job.id+".json")
             self.app.last_out = str(out)
@@ -124,7 +137,7 @@ class JobDialog(tk.Toplevel):
             tasks = latest["tasks"]
             for i,task in enumerate(tasks):
                 self.tree.item(str(i),values=(self.names.get(task["chat_id"],task["chat_id"]),
-                    labels[task["status"]],task["messages"],task["error"] or ""))
+                    labels[task["status"]],str(task["messages"])+(f" (+{task['messages_added']})" if task.get("messages_added") is not None else ""),task["error"] or ""))
             counts = Counter(task["status"] for task in tasks)
             self.status.configure(text=f"总数 {len(tasks)} · 成功 {counts['done']} · 失败 {counts['failed']} · 跳过 {counts['skipped']} · 等待 {counts['pending']}")
         self.timer = self.after(80,self.poll)

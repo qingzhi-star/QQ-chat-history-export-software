@@ -131,6 +131,25 @@ python -m qqexport export --chat c2c:u_example --format txt --message-id 1 --mes
 旧版 `config.json` 的缺省字段使用默认值，未知字段忽略；损坏或字段类型错误时
 明确报错并保留原文件，请先备份后修复。配置保存使用同目录临时文件原子替换。
 
+### P2 搜索、队列与增量
+
+工具菜单提供消息搜索、批量导出和队列恢复；左侧 Ctrl 点击可多选会话。搜索索引
+默认只在内存，可清除；关键词历史须显式勾选保存。结果可跳转高亮或导出 TXT/HTML。
+普通与多选预览共用分页虚拟列表，图片只在可视区附近按需加载。
+
+```powershell
+python -m qqexport search --query "关键词" --chat c2c:u_example --match contains
+python -m qqexport batch --all --yes --format txt,html --out "D:/backup" --checkpoint "D:/backup/job.json"
+python -m qqexport batch --resume "D:/backup/job.json" --retry-failed
+python -m qqexport batch --chat c2c:u_example --format txt,html --out "D:/backup" --incremental
+```
+
+批量窗口可取消、重试并选择保留未完成队列；队列只存会话标识/输出参数，恢复时
+核对账号和已完成产物哈希。勾选“增量备份”后会保存**明文消息快照和媒体**，请整体
+保管目标会话目录。以后用相同格式、编码、账号和目录运行，只追加新 TXT/HTML，
+PDF 重生。旧文件校验、首尾/计数或游标冲突时停止；旧普通导出没有增量清单，须
+另选空目录，或明确选择全量重建（CLI 使用 `--incremental --rebuild`）。
+
 运行测试：
 
 ```powershell

@@ -47,6 +47,8 @@ class ExportOptions:
     allow_network: bool = False
     cancel: object | None = None
     require_all_formats: bool = False
+    incremental: bool = False
+    rebuild: bool = False
 
 
 def folder_name(info: ChatInfo) -> str:
@@ -258,6 +260,9 @@ def validate_destination(source, destination):
 
 def export_chats(source: ExportSource, chat_ids: list[str],
                  opts: ExportOptions) -> ExportReport:
+    if opts.incremental:
+        from qqexport.export.incremental import export_incremental
+        return export_incremental(source,chat_ids,opts)
     formats = {f.lower() for f in (opts.formats or {opts.format})}
     if not formats or formats - _FORMATS:
         raise ValueError(f"不支持的格式：{formats}")

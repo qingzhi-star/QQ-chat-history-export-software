@@ -59,9 +59,30 @@ def run(count, search=False):
                 "stream_seconds": round(streaming, 3), "python_peak_mib": round(peak, 2), **search_metrics}
 
 
+def incremental_benchmark(count,added=100):
+    from qqexport.export import orchestrator
+    with tempfile.TemporaryDirectory(prefix="qqexport-bench-inc-") as temp:
+        root = Path(temp)
+        src = dataset(root,count)
+        opts = orchestrator.ExportOptions(formats={"txt","html"},out_base=root/"out",incremental=True)
+        orchestrator.export_chats(src,["c2c:u_a"],opts)
+        blob = sp.message(sp.text_element("new synthetic benchmark message"))
+        con = sqlite3.connect(src.msg_db)
+        con.executemany('INSERT INTO c2c_msg_table ("40001","40011","40020","40021","40050","40800") '
+            'VALUES (?,2,\'u_a\',\'u_a\',?,?)',((i+1,i//3,blob) for i in range(count,count+added)))
+        con.commit()
+        con.close()
+        start = time.perf_counter()
+        report = orchestrator.export_chats(src,["c2c:u_a"],opts)
+        elapsed = time.perf_counter()-start
+        assert report.messages_added==added and report.messages_total==count+added
+        return {"existing":count,"added":added,"incremental_ms":round(elapsed*1000,2)}
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--messages", type=int, default=100000)
     parser.add_argument("--search",action="store_true")
+    parser.add_argument("--incremental",action="store_true")
     args = parser.parse_args()
-    print(json.dumps(run(args.messages,args.search)))
+    print(json.dumps(incremental_benchmark(args.messages) if args.incremental else run(args.messages,args.search)))

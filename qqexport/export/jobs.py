@@ -12,9 +12,10 @@ import uuid
 from qqexport.export import orchestrator
 from qqexport.export.cancel import ExportCancelled,check_cancel
 from qqexport.state import atomic_json
+from qqexport.errors import UserError
 
 
-class JobError(ValueError):
+class JobError(UserError):
     pass
 
 
@@ -33,6 +34,7 @@ class ChatTask:
     status: str = "pending"
     attempts: int = 0
     messages: int = 0
+    messages_added: int | None = None
     error: str | None = None
     files: list[dict] = field(default_factory=list)
 
@@ -72,6 +74,7 @@ class ExportJob:
                     "formats":sorted(opts.formats),"out_base":str(opts.out_base),"encoding":opts.encoding,
                     "start_ts":opts.start_ts,"end_ts":opts.end_ts,"now":opts.now.isoformat(),
                     "allow_large_pdf":opts.allow_large_pdf,
+                    "incremental":opts.incremental,"rebuild":opts.rebuild,
                     "message_ids":sorted(opts.message_ids) if opts.message_ids is not None else None}}
 
     def _record(self,progress):
@@ -151,11 +154,16 @@ class ExportJob:
                     finally:
                         if hasattr(rows,"close"):
                             rows.close()
-                    if not found:
+                    if not found and not self.options.incremental:
                         task.status = "skipped"
                     else:
                         report = orchestrator.export_chats(source,[task.chat_id],self.options)
                         task.messages = report.messages_total
+                        task.messages_added = report.messages_added
+                        if self.options.incremental and report.chats_exported==0 and report.messages_added==0 and "空会话，已跳过" in report.warnings:
+                            task.status = "skipped"
+                            self._record(progress)
+                            continue
                         if report.chats_exported!=1 or report.pdf_error:
                             task.error = report.pdf_error or "导出失败，请检查输出目录和磁盘空间"
                             raise JobError("会话导出未完整成功")
@@ -164,7 +172,7 @@ class ExportJob:
                 except ExportCancelled:
                     task.status,task.error = "cancelled","已取消"
                 except Exception as exc:
-                    task.status,task.error = "failed",task.error or type(exc).__name__
+                    task.status,task.error = "failed",task.error or (str(exc) if isinstance(exc,UserError) else type(exc).__name__)
                 self._record(progress)
                 if self.cancel.is_set():
                     break
@@ -199,6 +207,9 @@ class ExportJob:
                 encoding=options["encoding"],start_ts=options["start_ts"],end_ts=options["end_ts"],
                 message_ids=set(options["message_ids"]) if options["message_ids"] is not None else None,
                 now=datetime.fromisoformat(options["now"]),allow_large_pdf=options["allow_large_pdf"])
+            opts.incremental,opts.rebuild = options.get("incremental",False),options.get("rebuild",False)
+            if type(opts.incremental) is not bool or type(opts.rebuild) is not bool:
+                raise ValueError
             tasks = data["tasks"]
             if not isinstance(tasks,list) or len(tasks)>10000:
                 raise ValueError
@@ -213,6 +224,9 @@ class ExportJob:
                     raise ValueError
                 task.status = "pending" if status in {"running","cancelled"} else status
                 task.attempts,task.messages,task.error = record["attempts"],record["messages"],record["error"]
+                task.messages_added = record.get("messages_added")
+                if task.messages_added is not None and (type(task.messages_added) is not int or task.messages_added<0):
+                    raise ValueError
                 task.files = record["files"]
                 if not isinstance(task.files,list) or not isinstance(task.chat_id,str):
                     raise ValueError

@@ -130,6 +130,8 @@ def build_parser() -> argparse.ArgumentParser:
     batch.add_argument("--checkpoint",type=Path,default=None)
     batch.add_argument("--manifest",action="store_true")
     batch.add_argument("--retry-failed",action="store_true")
+    batch.add_argument("--incremental",action="store_true",help="整会话增量备份，保存明文快照")
+    batch.add_argument("--rebuild",action="store_true",help="明确覆盖旧增量备份进行全量重建")
 
     exp = sub.add_parser("export", help="导出会话为 txt/html/pdf")
     _add_account_args(exp)
@@ -398,7 +400,8 @@ def _cmd_batch(args):
         else:
             ids = [c.chat_id for c in source.chats()] if args.all else args.chat
             job = ExportJob(source.account_uin,ids,orchestrator.ExportOptions(
-                formats=set((args.format or "html").split(",")),out_base=args.out or Path(".")),
+                formats=set((args.format or "html").split(",")),out_base=args.out or Path("."),
+                incremental=args.incremental,rebuild=args.rebuild),
                 checkpoint=args.checkpoint,write_manifest=args.manifest)
         state = job.run(source)
         counts = {status:sum(t["status"]==status for t in state["tasks"])
@@ -426,6 +429,10 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("导出全部会话请加 --yes 明确确认")
         if args.resume and any((args.format,args.out,args.checkpoint,args.manifest)):
             parser.error("恢复队列不能覆盖其格式/输出/检查点参数")
+        if args.rebuild and not args.incremental:
+            parser.error("--rebuild 仅用于 --incremental，并表示明确同意覆盖旧导出")
+        if args.resume and (args.incremental or args.rebuild):
+            parser.error("恢复队列不能更改增量模式")
     if args.command == "search":
         if not 1<=args.limit<=1000 or args.offset<0 or len(args.query)>1000:
             parser.error("搜索页大小必须为 1–1000，位置非负，关键词最多 1000 字符")

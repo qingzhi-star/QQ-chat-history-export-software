@@ -1,6 +1,7 @@
 """T9：自包含 HTML 导出（零外部资源，可按年份/数量分片）。"""
 from __future__ import annotations
 from qqexport.export.cancel import check_cancel
+from types import SimpleNamespace
 
 import html
 from dataclasses import dataclass, field
@@ -57,6 +58,9 @@ document.querySelectorAll('img.media').forEach(function(img){
 document.getElementById('lightbox').addEventListener('click',function(){
   this.classList.remove('show');});
 """
+
+MESSAGES_START = b"<!--qqexport:messages:start-->"
+MESSAGES_END = b"<!--qqexport:messages:end-->"
 
 
 @dataclass
@@ -192,6 +196,7 @@ def _write_doc(path: Path, chat: Chat, messages: list[Message], now: datetime,
         else:
             f.write('<div id="wrap">')
         current_day = None
+        f.write(MESSAGES_START.decode("ascii"))
         for msg in messages:
             check_cancel(cancel)
             day = datetime.fromtimestamp(msg.ts).date()
@@ -199,6 +204,7 @@ def _write_doc(path: Path, chat: Chat, messages: list[Message], now: datetime,
                 current_day = day
                 f.write(f'<div class="day"><span>{day:%Y-%m-%d}</span></div>')
             f.write(_msg_html(msg, emoji, link_files))
+        f.write(MESSAGES_END.decode("ascii"))
         f.write('</div><footer class="no-print">qqexport · 本地离线导出</footer>')
         f.write('<div id="lightbox"><img id="big" alt=""></div>')
         f.write(f"<script>{_JS}</script></body></html>")
@@ -246,3 +252,52 @@ def write_html(chat: Chat, out_dir: Path, opts: HtmlOptions) -> HtmlResult:
             f"<h1>{_e(chat.title)}</h1><ul>{links}</ul>", encoding="utf-8")
         files.append(index)
     return HtmlResult(files=files, messages=len(messages), shards=len(chunks))
+
+
+def append_html(previous,output,chat,new_messages,*,count,first_ts,last_ts,previous_ts,opts):
+    """旧消息 HTML 字节流保留，只更新页头并追加新消息；不重新解析旧正文。"""
+    class Summary:
+        def __len__(self):
+            return count
+        def __getitem__(self,index):
+            return SimpleNamespace(ts=first_ts if index==0 else last_ts)
+    now = opts.now or datetime.now()
+    with output.open("wb") as dst:
+        prefix = '<!DOCTYPE html>\n<html lang="zh-CN"><head><meta charset="utf-8">'
+        prefix += f"<title>{_e(chat.title)}</title><style>{_CSS}</style></head><body>"
+        prefix += _header_html(chat,Summary(),now,opts.account_uin)+'<div id="wrap">'
+        dst.write(prefix.encode("utf-8"))
+        dst.write(MESSAGES_START)
+        buffer,started,ended = b"",False,False
+        with previous.open("rb") as src:
+            while block := src.read(256*1024):
+                check_cancel(opts.cancel)
+                buffer += block
+                if not started:
+                    pos = buffer.find(MESSAGES_START)
+                    if pos<0:
+                        buffer = buffer[-len(MESSAGES_START):]
+                        continue
+                    buffer = buffer[pos+len(MESSAGES_START):]
+                    started = True
+                pos = buffer.find(MESSAGES_END)
+                if pos>=0:
+                    dst.write(buffer[:pos])
+                    ended = True
+                    break
+                keep = max(0,len(buffer)-len(MESSAGES_END))
+                dst.write(buffer[:keep])
+                buffer = buffer[keep:]
+        if not started or not ended:
+            raise ValueError("旧 HTML 缺少增量边界，请全量重建")
+        current_day = datetime.fromtimestamp(previous_ts).date()
+        for message in new_messages:
+            check_cancel(opts.cancel)
+            day = datetime.fromtimestamp(message.ts).date()
+            if day!=current_day:
+                current_day = day
+                dst.write(f'<div class="day"><span>{day:%Y-%m-%d}</span></div>'.encode("utf-8"))
+            dst.write(_msg_html(message,opts.emoji_map,opts.link_files).encode("utf-8"))
+        dst.write(MESSAGES_END)
+        dst.write(('</div><footer class="no-print">qqexport · 本地离线导出</footer>'
+                   '<div id="lightbox"><img id="big" alt=""></div>'+f"<script>{_JS}</script></body></html>").encode("utf-8"))
