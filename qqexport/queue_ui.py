@@ -74,10 +74,10 @@ class BatchDialog(tk.Toplevel):
                 orchestrator.ExportOptions(formats=formats,out_base=out,incremental=self.incremental.get(),rebuild=self.rebuild.get()),write_manifest=self.manifest.get())
             if self.remember.get():
                 job.checkpoint = config.app_dir()/"jobs"/(job.id+".json")
-            self.app.last_out = str(out)
+            self.app.remember_export(formats,out)
             JobDialog(self.app,session,job)
             self.destroy()
-        FormatDialog(self,self.app.last_out,on_ok=chosen)
+        FormatDialog(self,self.app.last_out,on_ok=chosen,default_formats=self.app.preferences.formats)
 
 
 class JobDialog(tk.Toplevel):

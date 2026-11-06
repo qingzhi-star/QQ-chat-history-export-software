@@ -20,6 +20,11 @@ from qqexport.virtual_list import VirtualMessages
 
 class ProductApp(App):
     def __init__(self, root, **kwargs):
+        self._config_failed = False
+        try:
+            self.preferences = config.Config.load()
+        except config.ConfigError:
+            self.preferences,self._config_failed = config.Config(),True
         self.tasks = TaskRunner(root)
         self.session = None
         self._source_gen = 0
@@ -28,6 +33,13 @@ class ProductApp(App):
         self._image_pending = set()
         self._jobs,self.batch_selected = [],set()
         super().__init__(root, **kwargs)
+        self.last_out = self.preferences.last_out or self.last_out
+        self.thumbnail_limit = self.preferences.thumbnail_mb*1024**2
+        self.virtual.density = self.preferences.density
+        root.geometry(self.preferences.geometry)
+        root.state(self.preferences.window_state)
+        if self._config_failed:
+            root.after_idle(self._recover_settings)
         root.bind("<Escape>", lambda _: self._cancel_export() if self.export_mode else None)
 
     def _build(self):
@@ -45,6 +57,9 @@ class ProductApp(App):
         self.tools_menu.add_command(label="打开/校验归档…",command=self._archive_open)
         self.tools_menu.add_command(label="本机缺失媒体…",command=self._missing_media)
         self.tools_menu.add_command(label="清理缩略图缓存…",command=self._clear_thumbnails)
+        self.tools_menu.add_command(label="切换本机账号…",command=self._switch_account)
+        self.tools_menu.add_command(label="设置…",command=self._settings)
+        self.tools_menu.add_command(label="生成定时导出任务…",command=self._schedule_export)
         for label,action in [("归档导入资料库…","import_library"),("打开本机资料库…","open_library"),("清空本机资料库…","clear_library")]:
             self.tools_menu.add_command(label=label,command=lambda action=action:self._library_action(action))
         menu = tk.Menu(self.root)
@@ -59,6 +74,41 @@ class ProductApp(App):
     def _archive_open(self):
         from qqexport.archive_ui import open_archive
         open_archive(self)
+
+    def _settings(self):
+        from qqexport.settings_ui import SettingsDialog
+        SettingsDialog(self)
+
+    def _schedule_export(self):
+        from qqexport.scheduled import prepare_dialog
+        prepare_dialog(self)
+
+    def _recover_settings(self):
+        if messagebox.askyesno("配置损坏","配置无法读取。是否先保留原文件备份，再恢复默认设置？取消后本次使用默认设置且不保存。",parent=self.root):
+            try:
+                config.Config.recover()
+                self.preferences,self._config_failed = config.Config(),False
+                self.status.configure(text="已备份原配置并恢复默认设置")
+            except config.ConfigError as exc:
+                self.status.configure(text=str(exc))
+
+    def _save_preferences(self):
+        if self._config_failed:
+            return
+        try:
+            self.preferences.save()
+        except config.ConfigError as exc:
+            self._config_failed = True
+            self.status.configure(text=str(exc))
+
+    def remember_export(self,formats,output):
+        self.last_out = self.preferences.last_out = str(output)
+        self.preferences.formats = sorted(formats)
+        self._save_preferences()
+
+    def _switch_account(self):
+        self.tasks.submit(lambda:discover.discover_accounts(explicit=self.data_dir),
+            lambda accounts:self._choose_account(accounts) if accounts else self.status.configure(text="未找到本机账号"),self._error)
 
     def _missing_media(self):
         from qqexport.media_ui import show_missing
@@ -208,7 +258,7 @@ class ProductApp(App):
         dialog.title("选择本机账号")
         dialog.transient(self.root)
         ttk.Label(dialog,text="请选择本人账号（不会默认使用第一个）：").pack(padx=16,pady=10)
-        choice = ttk.Combobox(dialog,values=[discover.mask_uin(a.uin) for a in accounts],state="readonly")
+        choice = ttk.Combobox(dialog,values=[discover.mask_uin(a.uin)+("（上次）" if a.uin==self.preferences.last_account else "") for a in accounts],state="readonly")
         choice.pack(padx=16,pady=8)
         def accept():
             if choice.current() < 0:
@@ -255,6 +305,8 @@ class ProductApp(App):
             self.session = session
             self._thumbs.clear()
             self.uin = account.uin
+            self.preferences.last_account = account.uin
+            self._save_preferences()
             self._refreshing = False
             self._loaded(session.source,session.infos,session.metas,{})
             if old:
@@ -397,14 +449,14 @@ class ProductApp(App):
         selected = set(self.selected_msgs)
         start,end = self.date_start,self.date_end
         def ready(ids):
-            FormatDialog(self.root,self.last_out,on_ok=lambda formats,out:
+            FormatDialog(self.root,self.last_out,default_formats=self.preferences.formats,on_ok=lambda formats,out:
                          self._export_selected(session,info,ids,start,end,formats,out))
         self._submit(session,lambda repo: repo.ids_for_indices(info.chat_id,selected),ready,gen=self._render_gen)
 
     def _export_selected(self, session, info, ids, start, end, formats, output):
         from qqexport.export.jobs import ExportJob
         from qqexport.queue_ui import JobDialog
-        self.last_out = str(output)
+        self.remember_export(formats,output)
         if session.retired:
             messagebox.showinfo("数据源已更新","请重新选择消息后导出。")
             return
@@ -425,6 +477,11 @@ class ProductApp(App):
     def close(self):
         if self._closed:
             return
+        state = self.root.state()
+        self.preferences.window_state = "zoomed" if state=="zoomed" else "normal"
+        if state=="normal":
+            self.preferences.geometry = self.root.geometry()
+        self._save_preferences()
         self._closed = True
         self.root.withdraw()
         for job in self._jobs:

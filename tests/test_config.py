@@ -110,3 +110,18 @@ def test_unreadable_config_is_not_treated_as_missing(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "read_text", fail)
     with pytest.raises(config.ConfigError, match="无法读取"):
         config.Config.load(tmp_path / "config.json")
+
+
+def test_explicit_recovery_keeps_original_bytes_and_defaults(tmp_path):
+    path = tmp_path/"config.json"
+    original = b'{"synthetic-corrupt": '
+    path.write_bytes(original)
+    backup = config.Config.recover(path)
+    assert backup.read_bytes()==original
+    assert config.Config.load(path)==config.Config()
+
+
+@pytest.mark.parametrize("kwargs",[{"thumbnail_mb":-1},{"formats":[]},{"density":[]},{"window_state":[]},{"geometry":"bad"},{"formats":[[]]}])
+def test_invalid_ui_settings_refuse_write(tmp_path,kwargs):
+    with pytest.raises(config.ConfigError):
+        config.Config(**kwargs).save(tmp_path/"config.json")

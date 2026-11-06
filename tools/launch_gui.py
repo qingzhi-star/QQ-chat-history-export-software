@@ -52,6 +52,13 @@ _prepare_tcl()
 from qqexport.gui import run_gui  # noqa: E402
 
 if __name__ == "__main__":
+    if len(sys.argv)==3 and sys.argv[1]=="--scheduled-export":
+        from qqexport.scheduled import run
+        try:
+            code = run(Path(sys.argv[2]))
+        except Exception:
+            code = 1
+        raise SystemExit(code)
     if len(sys.argv) == 3 and sys.argv[1] == "--smoke-test":
         from qqexport.smoke import run_smoke
         raise SystemExit(run_smoke(Path(sys.argv[2])))

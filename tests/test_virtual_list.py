@@ -139,5 +139,13 @@ def test_product_paging_selection_dates_and_chat_switch(tmp_path,monkeypatch):
         app._select_chat(0)
         wait(lambda: app.virtual.count==101 and bool(app.virtual.pages))
         assert app.source.meta["archive"] and app._watch_id is None
+        from qqexport.settings_ui import SettingsDialog
+        from qqexport import config
+        settings = SettingsDialog(app)
+        settings.density.set("compact")
+        settings.limit.set("16")
+        settings.save()
+        assert config.Config.load().density=="compact"
+        assert app.thumbnail_limit==16*1024**2
     finally:
         app.close()

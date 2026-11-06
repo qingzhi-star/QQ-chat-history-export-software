@@ -1413,7 +1413,7 @@ class DateRangeDialog(tk.Toplevel):
 
 
 class FormatDialog(tk.Toplevel):
-    def __init__(self, parent, default_out: str, *, on_ok, allowed_formats=None):
+    def __init__(self, parent, default_out: str, *, on_ok, allowed_formats=None,default_formats=None):
         super().__init__(parent)
         self.on_ok = on_ok
         self.title("选择格式和位置")
@@ -1426,6 +1426,9 @@ class FormatDialog(tk.Toplevel):
         self.vars = {"txt": tk.BooleanVar(value=False),
                      "pdf": tk.BooleanVar(value=False),
                      "html": tk.BooleanVar(value=True)}
+        if default_formats:
+            for key,var in self.vars.items():
+                var.set(key in default_formats)
         labels = {"txt": "TXT（纯文本）", "pdf": "PDF（含图片）",
                   "html": "HTML（含文件链接）"}
         for key in ("txt", "pdf", "html"):

@@ -66,6 +66,7 @@ class MessageRow(tk.Frame):
             widget.bind("<Button-3>", self.menu)
 
     def show(self, index, message, width):
+        self.body.configure(font=("Microsoft YaHei UI",9 if getattr(self.view,"density","normal")=="compact" else 10))
         changed = self.index != index or self.message is not message
         self.index, self.message = index, message
         if changed:
