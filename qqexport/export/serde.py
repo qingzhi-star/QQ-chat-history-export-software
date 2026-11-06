@@ -214,8 +214,7 @@ class MediaSnapshot:
             if media.source and media.source.is_file():
                 source = media.source
                 digest = hash_file(source,self.cancel)
-                ext = source.suffix.lower()
-                relative = f"media/{digest}{ext if len(ext)<=12 else '.bin'}"
+                relative = f"media/{digest}.bin"
                 target = self.root/relative
                 if not target.exists():
                     created = True
@@ -226,8 +225,7 @@ class MediaSnapshot:
                 uri = _data_uri(media.data_uri)
                 data = base64.b64decode(uri.split(",",1)[1],validate=True)
                 digest = hashlib.sha256(data).hexdigest()
-                ext = ".png" if uri.startswith("data:image/png") else ".jpg"
-                relative = f"media/{digest}{ext}"
+                relative = f"media/{digest}.bin"
                 target = self.root/relative
                 target.parent.mkdir(parents=True,exist_ok=True)
                 target.write_bytes(data)

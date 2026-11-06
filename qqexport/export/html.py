@@ -4,6 +4,7 @@ from qqexport.export.cancel import check_cancel
 from types import SimpleNamespace
 
 import html
+import base64
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -107,6 +108,13 @@ def _seg_html(seg: Segment, emoji: dict[int, str] | None = None,
         src = None
         if m is not None:
             src = m.data_uri or (m.rel_path if not m.missing else None)
+            if not src and m.source and not m.missing:
+                try:
+                    from qqexport.thumbnail_cache import image_mime
+                    data = m.source.read_bytes()
+                    src = "data:"+image_mime(data[:16])+";base64,"+base64.b64encode(data).decode("ascii")
+                except OSError:
+                    pass
         if not src:
             return '<div class="text">[图片]（本机无原图）</div>'
         return (f'<img class="media" loading="lazy" src="{_e(src)}" alt="图片">')

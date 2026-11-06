@@ -43,6 +43,8 @@ class ProductApp(App):
         self.tools_menu.add_command(label="恢复导出队列…",command=self._resume_queue)
         self.tools_menu.add_command(label="导出归档…",command=self._archive_export)
         self.tools_menu.add_command(label="打开/校验归档…",command=self._archive_open)
+        self.tools_menu.add_command(label="本机缺失媒体…",command=self._missing_media)
+        self.tools_menu.add_command(label="清理缩略图缓存…",command=self._clear_thumbnails)
         for label,action in [("归档导入资料库…","import_library"),("打开本机资料库…","open_library"),("清空本机资料库…","clear_library")]:
             self.tools_menu.add_command(label=label,command=lambda action=action:self._library_action(action))
         menu = tk.Menu(self.root)
@@ -57,6 +59,14 @@ class ProductApp(App):
     def _archive_open(self):
         from qqexport.archive_ui import open_archive
         open_archive(self)
+
+    def _missing_media(self):
+        from qqexport.media_ui import show_missing
+        show_missing(self)
+
+    def _clear_thumbnails(self):
+        from qqexport.media_ui import clear_thumbnails
+        clear_thumbnails(self)
 
     def mount_archive(self,reader):
         self.mount_offline(reader.source(),"离线归档已校验")
@@ -316,16 +326,9 @@ class ProductApp(App):
         except RuntimeError:
             return
         def decode():
-            from PIL import Image
+            from qqexport.thumbnail_cache import ThumbnailCache
             try:
-                if media.source and media.source.is_file():
-                    with Image.open(media.source) as original:
-                        original.thumbnail((240,240))
-                        return original.copy()
-                if media.data_uri:
-                    with Image.open(io.BytesIO(base64.b64decode(media.data_uri.split(",",1)[1]))) as original:
-                        original.thumbnail((240,240))
-                        return original.copy()
+                return ThumbnailCache(getattr(self,"thumbnail_limit",2*1024**3)).load(media)
             except (OSError,ValueError):
                 return None
         def ready(image):

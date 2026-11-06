@@ -155,7 +155,6 @@ def _fetch_remote_image(url: str,
 
 
 def _inline_images(messages: list[Message], *, allow_network=False, cancel=None) -> list[Message]:
-    cache: dict[Path, str | None] = {}
     remote_cache: dict[str, str | None] = {}
     out: list[Message] = []
     for msg in messages:
@@ -166,18 +165,8 @@ def _inline_images(messages: list[Message], *, allow_network=False, cancel=None)
             if (seg.kind == "image" and m is not None
                     and not m.data_uri):
                 uri = None
-                if m.source is not None and not m.missing:
-                    key = m.source
-                    if key not in cache:
-                        try:
-                            data = key.read_bytes()
-                            mime = mimetypes.guess_type(str(key))[0] or "image/jpeg"
-                            cache[key] = (f"data:{mime};base64,"
-                                          + base64.b64encode(data).decode("ascii"))
-                        except OSError:
-                            cache[key] = None
-                    uri = cache[key]
-                elif m.remote_url and allow_network:
+                # 本机图片在 HTML 写入当前消息时编码，避免整库 base64 常驻。
+                if not m.source and m.remote_url and allow_network:
                     uri = _fetch_remote_image(m.remote_url, remote_cache)
                 if uri:
                     segs.append(replace(seg, media=replace(

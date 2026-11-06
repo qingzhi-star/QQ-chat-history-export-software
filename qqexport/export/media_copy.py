@@ -1,4 +1,4 @@
-"""T7：只复制被引用媒体；硬链接优先、失败回退复制；绝不改源。"""
+"""只复制被引用媒体，按内容去重，独立副本不改源。"""
 from __future__ import annotations
 
 import os
@@ -20,10 +20,8 @@ class CopyResult:
 
 
 def _target_name(ref: MediaRef) -> str:
-    ext = (ref.source.suffix if ref.source else "") or \
-        (Path(ref.filename).suffix if ref.filename else "")
-    token = ref.md5 or hashlib.sha256(str(ref.source).encode("utf-8")).hexdigest()
-    return f"{ref.kind}_{token}{ext.lower()}"
+    from qqexport.export.serde import hash_file
+    return hash_file(ref.source)+".bin"
 
 
 def copy_media(refs: list[MediaRef], out_dir: Path, *, cancel=None) -> CopyResult:
@@ -38,6 +36,9 @@ def copy_media(refs: list[MediaRef], out_dir: Path, *, cancel=None) -> CopyResul
             continue
         name = _target_name(ref)
         dest = out_dir / name
+        if dest.exists():
+            result.rel_by_source[ref.source] = name
+            continue
         try:
             if dest.exists():
                 dest.unlink()
