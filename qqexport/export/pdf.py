@@ -2,9 +2,13 @@
 from __future__ import annotations
 
 import shutil
+import os
 import subprocess
+import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
+from qqexport.export.cancel import check_cancel
 
 _EDGE_CANDIDATES = (
     Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"),
@@ -31,7 +35,8 @@ def find_edge(candidates: tuple[Path, ...] | list[Path] | None = None) -> Path |
 
 
 def write_pdf(html_path: Path, out_pdf: Path, *, timeout: int = 600,
-              edge: Path | None = None) -> PdfResult:
+              edge: Path | None = None, cancel=None) -> PdfResult:
+    check_cancel(cancel)
     exe = edge or find_edge()
     if exe is None:
         return PdfResult(None, "未找到 Microsoft Edge，请改用 --format html")
@@ -42,7 +47,31 @@ def write_pdf(html_path: Path, out_pdf: Path, *, timeout: int = 600,
            "--no-pdf-header-footer", f"--print-to-pdf={out_pdf}",
            html_path.resolve().as_uri()]
     try:
-        subprocess.run(cmd, capture_output=True, timeout=timeout)
+        if cancel is None:
+            with tempfile.TemporaryDirectory(prefix="qqexport-pdf-profile-") as profile:
+                subprocess.run(cmd+[f"--user-data-dir={profile}","--no-first-run",
+                    "--disable-background-networking","--disable-extensions","--disable-sync"],
+                    capture_output=True, timeout=timeout)
+        else:
+            with tempfile.TemporaryDirectory(prefix="qqexport-pdf-profile-") as profile:
+                cmd += [f"--user-data-dir={profile}","--no-first-run","--disable-background-networking",
+                        "--disable-extensions","--disable-sync"]
+                with subprocess.Popen(cmd,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL) as proc:
+                    deadline = time.monotonic()+timeout
+                    try:
+                        while proc.poll() is None:
+                            check_cancel(cancel)
+                            if time.monotonic()>deadline:
+                                raise subprocess.TimeoutExpired(cmd,timeout)
+                            time.sleep(.1)
+                    finally:
+                        if proc.poll() is None:
+                            if os.name == "nt":
+                                subprocess.run(["taskkill","/PID",str(proc.pid),"/T","/F"],
+                                               stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=10)
+                            if proc.poll() is None:
+                                proc.kill()
+                            proc.wait(timeout=10)
     except subprocess.TimeoutExpired:
         return PdfResult(None, f"PDF 生成超时（>{timeout}s），已保留 html")
     except OSError as exc:

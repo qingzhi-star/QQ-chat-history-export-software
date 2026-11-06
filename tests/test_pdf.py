@@ -49,3 +49,35 @@ def test_write_pdf_missing_edge(tmp_path, monkeypatch):
     monkeypatch.setattr(pdf, "find_edge", lambda candidates=None: None)
     res = pdf.write_pdf(tmp_path / "x.html", tmp_path / "x.pdf")
     assert not res.ok and res.path is None
+
+
+def test_cancel_pdf_terminates_only_owned_process_tree(tmp_path,monkeypatch):
+    import threading
+    import pytest
+    from qqexport.export.cancel import ExportCancelled
+    cancel = threading.Event()
+    calls = []
+    class Process:
+        pid = 12345
+        returncode = None
+        def __enter__(self):
+            return self
+        def __exit__(self,*args):
+            pass
+        def poll(self):
+            cancel.set()
+            return self.returncode
+        def wait(self,**kwargs):
+            return self.returncode
+        def kill(self):
+            self.returncode = -1
+    child = Process()
+    monkeypatch.setattr(pdf.subprocess,"Popen",lambda cmd,**kw:child)
+    def terminate(cmd,**kwargs):
+        calls.append(cmd)
+        child.returncode = -1
+    monkeypatch.setattr(pdf.subprocess,"run",terminate)
+    with pytest.raises(ExportCancelled):
+        pdf.write_pdf(tmp_path/"chat.html",tmp_path/"chat.pdf",edge=tmp_path/"edge.exe",cancel=cancel)
+    if pdf.os.name=="nt":
+        assert calls==[["taskkill","/PID",str(child.pid),"/T","/F"]]

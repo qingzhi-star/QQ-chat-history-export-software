@@ -118,6 +118,19 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--limit",type=int,default=200)
     search.add_argument("--offset",type=int,default=0)
 
+    batch = sub.add_parser("batch",help="可取消/恢复的批量导出队列")
+    _add_account_args(batch)
+    targets = batch.add_mutually_exclusive_group(required=True)
+    targets.add_argument("--chat",action="append",default=[])
+    targets.add_argument("--all",action="store_true")
+    targets.add_argument("--resume",type=Path)
+    batch.add_argument("--yes",action="store_true",help="确认导出全部会话")
+    batch.add_argument("--format",type=_parse_formats,default=None)
+    batch.add_argument("--out",type=Path,default=None)
+    batch.add_argument("--checkpoint",type=Path,default=None)
+    batch.add_argument("--manifest",action="store_true")
+    batch.add_argument("--retry-failed",action="store_true")
+
     exp = sub.add_parser("export", help="导出会话为 txt/html/pdf")
     _add_account_args(exp)
     target = exp.add_mutually_exclusive_group(required=True)
@@ -371,10 +384,48 @@ def _cmd_search(args):
         source.close()
 
 
+def _cmd_batch(args):
+    from qqexport.export.jobs import ExportJob
+    source = _open_source(args)
+    if source is None:
+        return EXIT_FAIL
+    job = None
+    try:
+        if args.resume:
+            job = ExportJob.load(args.resume,source.account_uin)
+            if args.retry_failed:
+                job.retry_failed()
+        else:
+            ids = [c.chat_id for c in source.chats()] if args.all else args.chat
+            job = ExportJob(source.account_uin,ids,orchestrator.ExportOptions(
+                formats=set((args.format or "html").split(",")),out_base=args.out or Path(".")),
+                checkpoint=args.checkpoint,write_manifest=args.manifest)
+        state = job.run(source)
+        counts = {status:sum(t["status"]==status for t in state["tasks"])
+                  for status in ("done","failed","skipped","pending","cancelled")}
+        print(json.dumps(counts,ensure_ascii=False))
+        return EXIT_FAIL if any(counts[s] for s in ("failed","pending","cancelled")) else EXIT_OK
+    except KeyboardInterrupt:
+        if job:
+            job.cancel.set()
+        print("已取消；已完成产物保留。",file=sys.stderr)
+        return EXIT_FAIL
+    except Exception as exc:
+        print(f"错误：队列失败（{type(exc).__name__}）",file=sys.stderr)
+        return EXIT_FAIL
+    finally:
+        source.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     _force_utf8_stdio()
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command == "batch":
+        if args.all and not args.yes:
+            parser.error("导出全部会话请加 --yes 明确确认")
+        if args.resume and any((args.format,args.out,args.checkpoint,args.manifest)):
+            parser.error("恢复队列不能覆盖其格式/输出/检查点参数")
     if args.command == "search":
         if not 1<=args.limit<=1000 or args.offset<0 or len(args.query)>1000:
             parser.error("搜索页大小必须为 1–1000，位置非负，关键词最多 1000 字符")
@@ -402,6 +453,8 @@ def _dispatch(args) -> int:
         return _cmd_list(args)
     if args.command == "search":
         return _cmd_search(args)
+    if args.command == "batch":
+        return _cmd_batch(args)
     if args.command == "export":
         return _cmd_export(args)
     if args.command == "gui":

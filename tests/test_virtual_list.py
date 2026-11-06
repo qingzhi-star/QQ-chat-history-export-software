@@ -119,5 +119,17 @@ def test_product_paging_selection_dates_and_chat_switch(tmp_path,monkeypatch):
         dialog.clear_index()
         wait(lambda: not app.session.search.ready)
         dialog.close()
+        app._batch_toggle(0)
+        from qqexport.queue_ui import BatchDialog,JobDialog
+        from qqexport.export.jobs import ExportJob
+        from qqexport.export.orchestrator import ExportOptions
+        batch = BatchDialog(app)
+        assert batch.tree.selection()==("0",)
+        batch.destroy()
+        job = ExportJob("12345",["c2c:u_a"],ExportOptions(format="txt",out_base=tmp_path/"export"))
+        progress = JobDialog(app,app.session,job)
+        wait(lambda: progress.tree.item("0","values") and progress.tree.item("0","values")[1]=="成功")
+        assert job.tasks[0].messages==101
+        progress.close()
     finally:
         app.close()

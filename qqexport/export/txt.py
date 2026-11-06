@@ -11,12 +11,14 @@ from datetime import datetime
 from pathlib import Path
 
 from qqexport.export.model import Chat, Message, Segment
+from qqexport.export.cancel import check_cancel
 
 
 @dataclass
 class TxtOptions:
     encoding: str = "utf-8"
     bom: bool = True
+    cancel: object | None = None
 
 
 @dataclass
@@ -115,6 +117,7 @@ def write_txt(chat: Chat, out: Path, opts: TxtOptions) -> TxtResult:
         if use_bom:
             f.write(codecs.BOM_UTF8)
         for msg in messages:
+            check_cancel(opts.cancel)
             data, repl = _encode_count(_line(msg) + "\n", enc)
             replacements += repl
             f.write(data)

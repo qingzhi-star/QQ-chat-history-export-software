@@ -22,6 +22,7 @@ from qqexport.export import media_copy, pdf as pdf_mod, txt as txt_mod
 from qqexport.qq import avatars
 from qqexport.export.model import Chat, MediaRef, Message, Segment
 from qqexport.export.report import ExportReport
+from qqexport.export.cancel import ExportCancelled, check_cancel
 from qqexport.export.session import ChatInfo, ExportSource
 
 ROOT_FOLDER = "QQ聊天记录导出"
@@ -44,6 +45,8 @@ class ExportOptions:
     end_ts: int | None = None
     message_ids: set[int] | None = None
     allow_network: bool = False
+    cancel: object | None = None
+    require_all_formats: bool = False
 
 
 def folder_name(info: ChatInfo) -> str:
@@ -149,11 +152,12 @@ def _fetch_remote_image(url: str,
     return uri
 
 
-def _inline_images(messages: list[Message], *, allow_network=False) -> list[Message]:
+def _inline_images(messages: list[Message], *, allow_network=False, cancel=None) -> list[Message]:
     cache: dict[Path, str | None] = {}
     remote_cache: dict[str, str | None] = {}
     out: list[Message] = []
     for msg in messages:
+        check_cancel(cancel)
         segs = []
         for seg in msg.segments:
             m = seg.media
@@ -245,14 +249,23 @@ def _commit_dir(work: Path, final: Path) -> None:
         shutil.rmtree(backup, ignore_errors=True)
 
 
+def validate_destination(source, destination):
+    account = source.meta.get("account")
+    if account is not None and not source.meta.get("synthetic"):
+        if Path(destination).resolve().is_relative_to(account.data_dir.resolve()):
+            raise ValueError("导出目录不能位于 QQ 源数据目录内")
+
+
 def export_chats(source: ExportSource, chat_ids: list[str],
                  opts: ExportOptions) -> ExportReport:
     formats = {f.lower() for f in (opts.formats or {opts.format})}
     if not formats or formats - _FORMATS:
         raise ValueError(f"不支持的格式：{formats}")
     started = time.monotonic()
+    check_cancel(opts.cancel)
     now = opts.now or datetime.now()
     root = opts.out_base / ROOT_FOLDER
+    validate_destination(source,root)
     root.mkdir(parents=True, exist_ok=True)
     _cleanup_stale(root)
 
@@ -269,11 +282,15 @@ def export_chats(source: ExportSource, chat_ids: list[str],
         report.db_size_bytes = source.msg_db.stat().st_size
 
     for chat_id in chat_ids:
+        check_cancel(opts.cancel)
         info = infos.get(chat_id)
         if info is None:
             report.warnings.append(f"未找到会话 {chat_id}")
             continue
-        messages = list(source.iter_messages(chat_id))
+        messages = []
+        for message in source.iter_messages(chat_id):
+            check_cancel(opts.cancel)
+            messages.append(message)
         messages = [m for m in messages if not m.is_system]
         messages = _expand_markdown_images(
             messages, fetch=opts.allow_network and bool(formats & {"html", "pdf"}))
@@ -294,7 +311,7 @@ def export_chats(source: ExportSource, chat_ids: list[str],
                 chat = Chat(kind=info.kind, peer_id=info.peer, title=info.title,
                             subtitle=info.subtitle, messages=messages)
                 txt_mod.write_txt(chat, work / "chat.txt",
-                                  txt_mod.TxtOptions(encoding=opts.encoding))
+                                  txt_mod.TxtOptions(encoding=opts.encoding,cancel=opts.cancel))
             else:
                 keep_html = "html" in formats
                 rel: dict[Path, str] = {}
@@ -310,9 +327,9 @@ def export_chats(source: ExportSource, chat_ids: list[str],
                 file_refs = ([r for r in refs if r.kind == "file"]
                              if keep_html else [])
                 if file_refs:
-                    copied = media_copy.copy_media(file_refs, work / "media")
+                    copied = media_copy.copy_media(file_refs, work / "media",cancel=opts.cancel)
                     rel = copied.rel_by_source
-                relinked = _inline_images(_relink(messages, rel), allow_network=opts.allow_network)
+                relinked = _inline_images(_relink(messages, rel), allow_network=opts.allow_network,cancel=opts.cancel)
                 if opts.allow_network and not source.meta.get("synthetic"):
                     relinked = avatars.add_avatars(relinked)
                 nt_data = Path(source.meta.get("nt_data") or
@@ -323,20 +340,20 @@ def export_chats(source: ExportSource, chat_ids: list[str],
                 html_mod.write_html(chat, work, html_mod.HtmlOptions(
                     now=now, account_uin=source.account_uin,
                     shard_size=10 ** 9, emoji_map=emoji,
-                    link_files=keep_html))
+                    link_files=keep_html,cancel=opts.cancel))
                 if "pdf" in formats:
                     if len(messages) > 30000 and not opts.allow_large_pdf:
                         report.pdf_error = "消息超过 30000 条，未生成 PDF"
                         report.warnings.append(f"{chat_id}: {report.pdf_error}")
                     else:
                         res = pdf_mod.write_pdf(work / "chat.html",
-                                                work / "chat.pdf", edge=opts.edge)
+                                                work / "chat.pdf", edge=opts.edge, cancel=opts.cancel)
                         if not res.ok:
                             report.pdf_error = res.error
                             report.warnings.append(f"{chat_id}: {res.error}")
                 if "txt" in formats:
                     txt_mod.write_txt(chat, work / "chat.txt",
-                                      txt_mod.TxtOptions(encoding=opts.encoding))
+                                      txt_mod.TxtOptions(encoding=opts.encoding,cancel=opts.cancel))
                 if not keep_html:
                     (work / "chat.html").unlink(missing_ok=True)
                     media_dir = work / "media"
@@ -344,13 +361,17 @@ def export_chats(source: ExportSource, chat_ids: list[str],
                         shutil.rmtree(media_dir, ignore_errors=True)
 
             produced = any((work / f"chat.{ext}").is_file() for ext in formats)
-            if produced:
+            complete = all((work / f"chat.{ext}").is_file() for ext in formats)
+            if produced and (complete or not opts.require_all_formats):
+                check_cancel(opts.cancel)
                 _commit_dir(work, final)
                 committed = True
             else:
                 shutil.rmtree(work, ignore_errors=True)
-        except Exception as exc:
+        except BaseException as exc:
             shutil.rmtree(work, ignore_errors=True)
+            if isinstance(exc,ExportCancelled) or not isinstance(exc,Exception):
+                raise
             report.warnings.append(f"{chat_id}: {type(exc).__name__}")
 
         if committed:

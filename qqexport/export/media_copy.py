@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import os
+import hashlib
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from qqexport.export.model import MediaRef
+from qqexport.export.cancel import check_cancel
 
 
 @dataclass
@@ -20,14 +22,15 @@ class CopyResult:
 def _target_name(ref: MediaRef) -> str:
     ext = (ref.source.suffix if ref.source else "") or \
         (Path(ref.filename).suffix if ref.filename else "")
-    token = (ref.md5 or (ref.source.stem if ref.source else "media"))[:8]
+    token = ref.md5 or hashlib.sha256(str(ref.source).encode("utf-8")).hexdigest()
     return f"{ref.kind}_{token}{ext.lower()}"
 
 
-def copy_media(refs: list[MediaRef], out_dir: Path) -> CopyResult:
+def copy_media(refs: list[MediaRef], out_dir: Path, *, cancel=None) -> CopyResult:
     result = CopyResult()
     out_dir.mkdir(parents=True, exist_ok=True)
     for ref in refs:
+        check_cancel(cancel)
         if ref.source is None or not ref.source.is_file():
             result.missing += 1
             continue
@@ -38,10 +41,12 @@ def copy_media(refs: list[MediaRef], out_dir: Path) -> CopyResult:
         try:
             if dest.exists():
                 dest.unlink()
-            try:
-                os.link(ref.source, dest)
-            except OSError:
-                shutil.copy2(ref.source, dest)
+            # 独立副本：用户编辑导出附件也不会经硬链接改到 QQ 源文件。
+            with ref.source.open("rb") as src, dest.open("wb") as dst:
+                while block := src.read(1024*1024):
+                    check_cancel(cancel)
+                    dst.write(block)
+            shutil.copystat(ref.source,dest)
         except OSError:
             result.missing += 1
             continue

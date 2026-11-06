@@ -10,11 +10,14 @@ class TaskRunner:
         self.root, self.results = root, queue.Queue()
         self.pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="qqexport")
         self.closed = False
+        self.futures = set()
         self.timer = root.after(15, self.drain)
 
     def submit(self, work, done, error):
         future = self.pool.submit(work)
+        self.futures.add(future)
         def completed(f):
+            self.futures.discard(f)
             if self.closed:
                 if not f.cancelled() and f.exception() is None:
                     value = f.result()
@@ -52,6 +55,10 @@ class TaskRunner:
                 value = future.result()
                 if hasattr(value, "retire"):
                     value.retire()
+
+
+    def idle(self):
+        return not self.futures
 
 
 class DataSession:

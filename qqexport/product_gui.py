@@ -26,6 +26,7 @@ class ProductApp(App):
         self._closed = False
         self._thumbs = OrderedDict()
         self._image_pending = set()
+        self._jobs,self.batch_selected = [],set()
         super().__init__(root, **kwargs)
         root.bind("<Escape>", lambda _: self._cancel_export() if self.export_mode else None)
 
@@ -38,9 +39,42 @@ class ProductApp(App):
         self.virtual.pack(fill="both", expand=True)
         self.tools_menu = tk.Menu(self.root,tearoff=False)
         self.tools_menu.add_command(label="搜索消息",command=self._show_search)
+        self.tools_menu.add_command(label="批量导出…",command=self._show_batch)
+        self.tools_menu.add_command(label="恢复导出队列…",command=self._resume_queue)
         menu = tk.Menu(self.root)
         menu.add_cascade(label="工具",menu=self.tools_menu)
         self.root.configure(menu=menu)
+
+    def _show_batch(self):
+        if self.session is not None:
+            from qqexport.queue_ui import BatchDialog
+            BatchDialog(self)
+
+    def _resume_queue(self):
+        from qqexport.queue_ui import resume
+        resume(self)
+
+    def _make_row(self,idx,info):
+        super()._make_row(idx,info)
+        for widget in self.row_widgets[-1]["widgets"]:
+            widget.bind("<Control-Button-1>",lambda _,i=idx:self._batch_toggle(i))
+
+    def _batch_toggle(self,idx):
+        chat = self.infos[idx].chat_id
+        if chat in self.batch_selected:
+            self.batch_selected.remove(chat)
+        else:
+            self.batch_selected.add(chat)
+        self._paint_rows()
+        self.status.configure(text=f"已选择 {len(self.batch_selected)} 个会话，可从工具菜单批量导出")
+        return "break"
+
+    def _paint_rows(self):
+        super()._paint_rows()
+        for i,row in enumerate(self.row_widgets):
+            if self.infos[i].chat_id in self.batch_selected:
+                for widget in row["widgets"]:
+                    widget.configure(bg="#deebfb")
 
     def _show_search(self):
         if self.session is not None:
@@ -148,6 +182,8 @@ class ProductApp(App):
                 session.retire()
                 return
             old = self.session
+            if not refresh:
+                self.batch_selected.clear()
             self.session = session
             self._thumbs.clear()
             self.uin = account.uin
@@ -300,11 +336,15 @@ class ProductApp(App):
         self._submit(session,lambda repo: repo.ids_for_indices(info.chat_id,selected),ready,gen=self._render_gen)
 
     def _export_selected(self, session, info, ids, start, end, formats, output):
+        from qqexport.export.jobs import ExportJob
+        from qqexport.queue_ui import JobDialog
         self.last_out = str(output)
-        self.status.configure(text="正在导出…")
-        self._submit(session,lambda repo: orchestrator.export_chats(repo,[info.chat_id],
-            orchestrator.ExportOptions(formats=formats,out_base=output,start_ts=start,end_ts=end,message_ids=ids)),
-            lambda report: self._export_done(report,output))
+        if session.retired:
+            messagebox.showinfo("数据源已更新","请重新选择消息后导出。")
+            return
+        job = ExportJob(session.source.account_uin,[info.chat_id],
+            orchestrator.ExportOptions(formats=formats,out_base=output,start_ts=start,end_ts=end,message_ids=ids))
+        JobDialog(self,session,job)
 
     def _watch_live(self):
         self._watch_id = None
@@ -317,10 +357,30 @@ class ProductApp(App):
         self._schedule_watch()
 
     def close(self):
+        if self._closed:
+            return
         self._closed = True
+        self.root.withdraw()
+        for job in self._jobs:
+            job.cancel.set()
+        for child in self.root.winfo_children():
+            if isinstance(child,tk.Toplevel):
+                child.withdraw()
+            cancel = getattr(child,"cancel",None)
+            if hasattr(cancel,"set"):
+                cancel.set()
         if self._watch_id:
             self.root.after_cancel(self._watch_id)
         self.tasks.close()
         if self.session:
             self.session.retire()
+        self._finish_close()
+
+    def _finish_close(self):
+        if not self.tasks.idle():
+            self.root.after(25,self._finish_close)
+            return
+        self.tasks.pool.shutdown(wait=True)
+        self._thumbs.clear()
+        self.virtual.pages.clear()
         self.root.destroy()

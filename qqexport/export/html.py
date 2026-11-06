@@ -1,5 +1,6 @@
 """T9：自包含 HTML 导出（零外部资源，可按年份/数量分片）。"""
 from __future__ import annotations
+from qqexport.export.cancel import check_cancel
 
 import html
 from dataclasses import dataclass, field
@@ -65,6 +66,7 @@ class HtmlOptions:
     shard_size: int = 20000
     emoji_map: dict[int, str] = field(default_factory=dict)
     link_files: bool = True
+    cancel: object | None = None
 
 
 @dataclass
@@ -180,7 +182,7 @@ def _header_html(chat: Chat, messages: list[Message], now: datetime,
 def _write_doc(path: Path, chat: Chat, messages: list[Message], now: datetime,
                account: str, nav: str = "",
                emoji: dict[int, str] | None = None,
-               link_files: bool = True) -> None:
+               link_files: bool = True, cancel=None) -> None:
     with open(path, "w", encoding="utf-8") as f:
         f.write("<!DOCTYPE html>\n<html lang=\"zh-CN\"><head><meta charset=\"utf-8\">")
         f.write(f"<title>{_e(chat.title)}</title><style>{_CSS}</style></head><body>")
@@ -191,6 +193,7 @@ def _write_doc(path: Path, chat: Chat, messages: list[Message], now: datetime,
             f.write('<div id="wrap">')
         current_day = None
         for msg in messages:
+            check_cancel(cancel)
             day = datetime.fromtimestamp(msg.ts).date()
             if day != current_day:
                 current_day = day
@@ -232,7 +235,7 @@ def write_html(chat: Chat, out_dir: Path, opts: HtmlOptions) -> HtmlResult:
     for name, chunk in chunks:
         path = out_dir / f"{name}.html"
         _write_doc(path, chat, chunk, now, opts.account_uin,
-                   nav if len(chunks) > 1 else "", opts.emoji_map, opts.link_files)
+                   nav if len(chunks) > 1 else "", opts.emoji_map, opts.link_files, opts.cancel)
         files.append(path)
     if len(chunks) > 1:
         index = out_dir / "index.html"
