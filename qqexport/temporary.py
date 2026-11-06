@@ -4,7 +4,7 @@ import tempfile
 from qqexport import config
 
 
-KINDS = ("exports","archives","archive-build")
+KINDS = ("exports","archives","archive-build","profiles")
 
 
 def workspace(kind):

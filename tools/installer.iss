@@ -1,5 +1,5 @@
 ; QQ聊天记录导出 - Inno Setup 6
-#define MyAppName "QQ聊天记录导出"
+#define MyAppName "绮录"
 #ifdef SmokeBuild
   #undef MyAppName
   #define MyAppName "QQExport Smoke Test"
@@ -28,6 +28,7 @@ OutputBaseFilename=QQExport-Setup-{#MyAppVersion}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=..\qqexport\assets\qilu.ico
 PrivilegesRequired=lowest
 UninstallDisplayIcon={app}\{#MyAppExeName}
 ArchitecturesAllowed=x64compatible

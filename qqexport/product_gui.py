@@ -46,14 +46,17 @@ class ProductApp(App):
         root.state(self.preferences.window_state)
         if self._config_failed:
             root.after_idle(self._recover_settings)
-        root.bind("<Escape>", lambda _: self._cancel_export() if self.export_mode else None)
+        root.bind("<Escape>",self._escape)
 
     def _build(self):
         super()._build()
         from qqexport.chat_sidebar import ChatSidebar
         self.sidebar = ChatSidebar(self)
-        self.account_button = ttk.Button(self.count_label.master,text="选择/切换账号…",command=self._switch_account)
-        self.account_button.pack(anchor="w",pady=(4,0))
+        from qqexport.account_panel import AccountPanel
+        self.count_label.pack_forget()
+        self.accounts_panel = AccountPanel(self,self.left_panel,self.chats_label)
+        self.account_button = self.accounts_panel.button
+        self._build_footer()
         preview_width = self.text.winfo_reqwidth()+self.tsb.winfo_reqwidth()
         preview_height = self.text.winfo_reqheight()
         self.text.pack_forget()
@@ -99,6 +102,35 @@ class ProductApp(App):
         self.selected_idx = next((i for i,info in enumerate(self.infos) if info.chat_id==selected),None)
         self._paint_rows()
         self.gui_avatars.reset(source,infos)
+        self.accounts_panel.current(source)
+
+    def _escape(self,_=None):
+        if self.accounts_panel.popup is not None:
+            self.accounts_panel.close()
+        elif self.export_mode:
+            self._cancel_export()
+
+    def _build_footer(self):
+        from qqexport.ui import ActionButton,INK,MUTED
+        bottom = self.export_btn.master
+        self.status.pack_forget()
+        for widget in (self.export_btn,self.export_center,self.export_right,self.date_label):
+            widget.destroy()
+        bottom.configure(padding=(8,10))
+        self.export_btn = ActionButton(bottom,text="导出记录",primary=True,command=self._open_export)
+        self.export_btn.pack(side="left")
+        self.export_center = ttk.Frame(bottom)
+        self.all_btn = ActionButton(self.export_center,text="全选",command=self._toggle_all)
+        self.all_btn.pack(side="left",padx=(0,8))
+        self.date_btn = ActionButton(self.export_center,text="时间选择",command=self._pick_dates)
+        self.date_btn.pack(side="left")
+        self.date_label = ttk.Label(self.export_center,text="",foreground=MUTED,font=("Microsoft YaHei UI",9))
+        self.export_right = ttk.Frame(bottom)
+        self.cancel_btn = ActionButton(self.export_right,text="取消",command=self._cancel_export)
+        self.cancel_btn.pack(side="left",padx=(0,8))
+        self.next_btn = ActionButton(self.export_right,text="下一步",primary=True,command=self._next_step)
+        self.next_btn.pack(side="left")
+        self.status.pack(side="left",padx=14,fill="x",expand=True)
 
     def _load_chat_rows(self):
         self.sidebar.reset(self._sidebar_same_account)
@@ -337,23 +369,7 @@ class ProductApp(App):
         self.tasks.submit(discover_accounts, ready, self._error)
 
     def _choose_account(self, accounts):
-        dialog = tk.Toplevel(self.root)
-        dialog.title("选择本机账号")
-        dialog.transient(self.root)
-        ttk.Label(dialog,text="请选择本人账号（不会默认使用第一个）：").pack(padx=16,pady=10)
-        choice = ttk.Combobox(dialog,width=36,values=[discover.mask_uin(a.uin)
-            +("（当前）" if a.uin==self.uin else "（上次）" if a.uin==self.preferences.last_account else "")
-            for a in accounts],state="readonly")
-        choice.pack(padx=16,pady=8)
-        ttk.Label(dialog,text="选择后自动准备并加载聊天记录，请保持所选账号已在 QQ 登录。",justify="left").pack(padx=16,pady=4)
-        def accept():
-            if choice.current() < 0:
-                return
-            account = accounts[choice.current()]
-            dialog.destroy()
-            self._open_account(account,auto_key=True)
-        ttk.Button(dialog,text="确定",command=accept).pack(pady=12)
-        dialog.grab_set()
+        self.accounts_panel.show(accounts)
 
     def _open_account(self, account, *, refresh=False,auto_key=False):
         if self._account_opening:
@@ -429,7 +445,7 @@ class ProductApp(App):
                 self.virtual.reset(0)
                 self.title_label.configure(text="选择左侧会话查看内容")
                 self.export_btn.state(["disabled"])
-                self.status.configure(text="选择会话；双击打开本机附件，右键复制消息")
+                self.status.configure(text="")
         def failed(exc):
             if gen == self._source_gen:
                 self._account_opening = False
@@ -516,22 +532,36 @@ class ProductApp(App):
     def _open_export(self):
         if self.selected_idx is None or not self.virtual.count:
             return
+        if self.export_mode:
+            return
         self.export_mode = True
         self.selected_msgs.clear()
         self.date_start = self.date_end = None
-        self.export_center.pack(side="right")
+        self.date_btn.configure(text="时间选择")
+        self.export_btn.pack_forget()
+        self.export_center.pack(side="left",before=self.status)
         self.export_right.pack(side="right")
         self.virtual.selection(True,self.selected_msgs)
         self._update_all_label()
-        self.status.configure(text="勾选消息，或使用全选/日期选择")
 
     def _exit_export_mode(self):
         self.export_mode = False
         self.export_center.pack_forget()
         self.export_right.pack_forget()
         self.date_label.pack_forget()
+        self.export_btn.pack(side="left",before=self.status)
         if hasattr(self,"virtual"):
             self.virtual.selection(False,self.selected_msgs)
+
+    def _cancel_export(self):
+        self.selected_msgs.clear()
+        self._clear_date_filter()
+        self._exit_export_mode()
+        self.status.configure(text="")
+
+    def _clear_date_filter(self):
+        super()._clear_date_filter()
+        self.date_btn.configure(text="时间选择")
 
     def _toggle_check(self, index):
         selection.toggle(self.selected_msgs,index)
@@ -549,7 +579,7 @@ class ProductApp(App):
 
     def _update_all_label(self):
         self.all_btn.configure(text="全不选" if len(self.selected_msgs)==self.virtual.count else "全选")
-        self.status.configure(text=f"已选择 {len(self.selected_msgs)} / {self.virtual.count} 条")
+        self.status.configure(text=f"已选择 {len(self.selected_msgs)} / {self.virtual.count} 条",foreground="#81798e")
 
     def _apply_dates(self, start, end):
         self.date_start,self.date_end = start,end
@@ -557,6 +587,14 @@ class ProductApp(App):
         def ready(indices):
             self.selected_msgs = indices
             self.virtual.selection(True,indices)
+            from datetime import datetime
+            label = "—".join(datetime.fromtimestamp(value).strftime("%m/%d") if value is not None else "不限"
+                               for value in (start,end))
+            self.date_label.configure(text=label)
+            if start is not None or end is not None:
+                self.date_btn.configure(text="时间 · "+label)
+            else:
+                self.date_btn.configure(text="时间选择")
             self._update_all_label()
         self._submit(self.session,lambda repo: repo.indices_in_range(chat,start,end),ready,gen=self._render_gen)
 
@@ -569,7 +607,8 @@ class ProductApp(App):
         selected = set(self.selected_msgs)
         start,end = self.date_start,self.date_end
         def ready(ids):
-            FormatDialog(self.root,self.last_out,default_formats=self.preferences.formats,on_ok=lambda formats,out:
+            FormatDialog(self.root,self.last_out,default_formats=self.preferences.formats,
+                         summary=f"{info.title} · 已选择 {len(ids)} 条消息",on_ok=lambda formats,out:
                          self._export_selected(session,info,ids,start,end,formats,out))
         self._submit(session,lambda repo: repo.ids_for_indices(info.chat_id,selected),ready,gen=self._render_gen)
 
@@ -638,6 +677,7 @@ class ProductApp(App):
             self.preferences.geometry = self.root.geometry()
         self._save_preferences()
         self._closed = True
+        self.accounts_panel.close()
         self.root.withdraw()
         for job in self._jobs:
             job.cancel.set()

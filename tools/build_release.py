@@ -106,7 +106,7 @@ def write_version_file(path: Path, version: str) -> None:
         f"filevers={numbers!r}, prodvers={numbers!r}, mask=0x3f, flags=0, OS=0x40004, "
         "fileType=1, subtype=0, date=(0, 0)), kids=[StringFileInfo([StringTable('080404B0', ["
         f"StringStruct('FileVersion', {version!r}), StringStruct('ProductVersion', {version!r}), "
-        "StringStruct('ProductName', 'QQ聊天记录导出'), "
+        "StringStruct('ProductName', '绮录'), StringStruct('FileDescription', '绮录 · QQ聊天记录导出'), "
         "StringStruct('OriginalFilename', 'QQExport.exe')])]), "
         "VarFileInfo([VarStruct('Translation', [2052, 1200])])])", encoding="utf-8")
 
@@ -178,6 +178,7 @@ def build(output: Path, *, iscc: Path | None, wheelhouse: Path | None = None) ->
              "--specpath", str(work), "--hidden-import", "PIL._tkinter_finder",
              "--collect-submodules", "qqexport", "--copy-metadata", "qqexport",
              "--copy-metadata", "regex",
+             "--collect-data", "qqexport", "--icon", str(ROOT/"qqexport"/"assets"/"qilu.ico"),
              "--version-file", str(version_file), str(ROOT / "tools" / "launch_gui.py")], log, env=env)
         bundle = stage / "QQExport"
         for name in ("LICENSE","NOTICE","README.md"):

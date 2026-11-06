@@ -1,12 +1,15 @@
-# QQ 聊天记录导出
+# 绮录
 
 <!-- version:start -->
-当前源码版本：**0.2.0rc8**。
+当前源码版本：**0.2.0rc9**。
 <!-- version:end -->
 
-在 Windows 上导出**本机已登录 QQ NT 账号**的聊天记录，支持 TXT、PDF、HTML，
+绮录是在 Windows 上收藏和导出**本机已登录 QQ NT 账号**聊天记录的工具，支持 TXT、PDF、HTML，
 支持搜索、批量/增量备份、可校验加密归档与离线浏览，也可按日期或逐条勾选消息。
 当前为 P2 候选版；性能例外及真机验证边界见 [验收记录](docs/P2-performance.md)。
+
+左上角展示当前账号头像、用户名和 QQ 号，点击旁边的切换按钮展开本机账号列表。
+选择账号后自动准备并加载记录；导出、全选与时间范围集中在底部操作栏。
 
 项目地址：<https://github.com/qingzhi-star/QQ-chat-history-export-software>
 

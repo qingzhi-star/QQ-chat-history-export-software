@@ -4,7 +4,7 @@ from qqexport.core import keystore,keyscan,sqlcipher
 
 class AccountAccessError(RuntimeError):
     MESSAGES = {
-        "missing": "该账号尚无可用口令，请点击左下角选择账号，软件会自动获取。",
+        "missing": "该账号尚无可用口令，请点击左上角切换账号，软件会自动获取。",
         "database": "无法读取所选账号的数据库，请先在 QQ 登录该账号后重试。",
         "not_found": "未能自动获取所选账号的口令，请先在 QQ 登录该账号后重试。",
         "permission": "无法读取 QQ 进程，请以与 QQ 相同的权限运行本软件后重试。",

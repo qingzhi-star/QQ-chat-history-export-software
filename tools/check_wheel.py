@@ -15,6 +15,11 @@ import zipfile
 from pathlib import Path
 
 REQUIRED = (
+    "qqexport/assets/qilu.png",
+    "qqexport/assets/qilu.ico",
+    "qqexport/branding.py",
+    "qqexport/account_panel.py",
+    "qqexport/ui.py",
     "qqexport/__init__.py",
     "qqexport/__main__.py",
     "qqexport/cli.py",

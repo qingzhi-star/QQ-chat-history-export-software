@@ -69,7 +69,9 @@ class App:
         self._busy = False
         self._load_gen = 0
         self._setup_logging()
-        root.title("QQ 聊天记录导出")
+        from qqexport.branding import APP_NAME,apply_icon
+        root.title(APP_NAME)
+        apply_icon(root)
         root.geometry("1120x700")
         root.minsize(960, 560)
         self._build()
@@ -124,7 +126,9 @@ class App:
 
         left = ttk.Frame(paned)
         paned.add(left, weight=2)
-        ttk.Label(left, text="会话", font=("Microsoft YaHei UI", 10, "bold")).pack(anchor="w")
+        self.left_panel = left
+        self.chats_label = ttk.Label(left, text="会话", font=("Microsoft YaHei UI", 10, "bold"))
+        self.chats_label.pack(anchor="w")
         box = ttk.Frame(left)
         box.pack(fill="both", expand=True, pady=4)
         self.canvas = tk.Canvas(box, bg="#ffffff", highlightthickness=0, width=300)
@@ -1337,6 +1341,8 @@ class DateRangeDialog(tk.Toplevel):
         self.body = ttk.Frame(self, padding=10)
         self.body.pack(fill="both", expand=True)
         self._build()
+        from qqexport.ui import center_dialog
+        center_dialog(self,parent)
 
     def _build(self) -> None:
         for child in self.body.winfo_children():
@@ -1409,41 +1415,62 @@ class DateRangeDialog(tk.Toplevel):
 
 
 class FormatDialog(tk.Toplevel):
-    def __init__(self, parent, default_out: str, *, on_ok, allowed_formats=None,default_formats=None):
+    def __init__(self, parent, default_out: str, *, on_ok, allowed_formats=None,default_formats=None,summary=None):
         super().__init__(parent)
+        from qqexport.ui import ActionButton,center_dialog,INK,MUTED,SURFACE
+        from qqexport.branding import apply_icon
+        self.withdraw()
         self.on_ok = on_ok
-        self.title("选择格式和位置")
+        self.title("绮录 · 导出设置")
         self.transient(parent)
-        self.grab_set()
-        body = ttk.Frame(self, padding=14)
+        self.configure(bg=SURFACE)
+        self.resizable(False,False)
+        apply_icon(self)
+        body = tk.Frame(self,bg=SURFACE,padx=24,pady=22)
         body.pack(fill="both", expand=True)
-        ttk.Label(body, text="导出格式（可多选）",
-                  font=("Microsoft YaHei UI", 10, "bold")).pack(anchor="w")
+        tk.Label(body,text="把这段对话，收进绮录",font=("Microsoft YaHei UI",15,"bold"),
+                 bg=SURFACE,fg=INK).pack(anchor="w")
+        tk.Label(body,text=summary or "选择导出格式与保存位置",font=("Microsoft YaHei UI",9),
+                 bg=SURFACE,fg=MUTED,wraplength=470,justify="left").pack(anchor="w",pady=(6,20))
+        tk.Label(body,text="导出格式 · 可多选",font=("Microsoft YaHei UI",10,"bold"),bg=SURFACE,fg=INK).pack(anchor="w",pady=(0,8))
         self.vars = {"txt": tk.BooleanVar(value=False),
                      "pdf": tk.BooleanVar(value=False),
                      "html": tk.BooleanVar(value=True)}
-        if default_formats:
+        if default_formats is not None:
             for key,var in self.vars.items():
                 var.set(key in default_formats)
-        labels = {"txt": "TXT（纯文本）", "pdf": "PDF（含图片）",
-                  "html": "HTML（含文件链接）"}
+        labels = {"txt": ("TXT · 纯文本","轻量保存，方便搜索和复制"),
+                  "pdf": ("PDF · 文档","保留图片，适合阅读和打印"),
+                  "html": ("HTML · 网页","保留图片与附件链接，浏览器直接打开")}
+        self.format_cards = {}
         for key in ("txt", "pdf", "html"):
             if allowed_formats is not None and key not in allowed_formats:
                 self.vars[key].set(False)
                 continue
-            ttk.Checkbutton(body, text=labels[key],
-                            variable=self.vars[key]).pack(anchor="w", padx=16)
-        ttk.Label(body, text="导出位置", font=("Microsoft YaHei UI", 10, "bold")).pack(
-            anchor="w", pady=(14, 4))
-        row = ttk.Frame(body)
-        row.pack(fill="x")
+            card = tk.Frame(body,bg="#ffffff",highlightthickness=1,highlightbackground="#e4dfed",padx=12,pady=8)
+            card.pack(fill="x",pady=(0,7))
+            check = tk.Checkbutton(card,text=labels[key][0],variable=self.vars[key],bg="#ffffff",fg=INK,
+                activebackground="#ffffff",selectcolor="#eee7fc",font=("Microsoft YaHei UI",10,"bold"),
+                anchor="w",cursor="hand2",bd=0,highlightthickness=0)
+            check.pack(anchor="w")
+            tk.Label(card,text=labels[key][1],bg="#ffffff",fg=MUTED,font=("Microsoft YaHei UI",9)).pack(anchor="w",padx=24)
+            self.format_cards[key] = card
+        tk.Label(body,text="保存位置",font=("Microsoft YaHei UI",10,"bold"),bg=SURFACE,fg=INK).pack(anchor="w",pady=(13,8))
+        row = tk.Frame(body,bg=SURFACE)
+        row.pack(fill="x",pady=(0,8))
         self.out_var = tk.StringVar(value=default_out)
         ttk.Entry(row, textvariable=self.out_var).pack(side="left", fill="x", expand=True)
-        ttk.Button(row, text="选择…", command=self._browse).pack(side="left", padx=4)
-        btns = ttk.Frame(body)
-        btns.pack(fill="x", pady=(16, 0))
-        ttk.Button(btns, text="取消", command=self.destroy).pack(side="right")
-        ttk.Button(btns, text="确定", command=self._ok).pack(side="right", padx=6)
+        ttk.Button(row,text="选择文件夹",command=self._browse).pack(side="left",padx=(8,0))
+        btns = tk.Frame(body,bg=SURFACE)
+        btns.pack(fill="x",pady=(16,0))
+        ActionButton(btns,text="取消",command=self.destroy).pack(side="left")
+        self.confirm = ActionButton(btns,text="开始导出",primary=True,command=self._ok)
+        self.confirm.pack(side="right")
+        self.bind("<Escape>",lambda _:self.destroy())
+        center_dialog(self,parent,width=540)
+        self.deiconify()
+        self.grab_set()
+        self.confirm.focus_set()
 
     def _browse(self) -> None:
         chosen = filedialog.askdirectory(parent=self, initialdir=self.out_var.get() or None)

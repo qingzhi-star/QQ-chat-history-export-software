@@ -10,9 +10,10 @@ from qqexport.product_gui import ProductApp
 from qqexport.tk_runtime import create_root
 from tests.test_repository import source
 from qqexport.account_access import sqlcipher,keyscan
+from qqexport.account_panel import Identity
 
 
-def test_bottom_left_button_selects_switches_and_cancels(tmp_path,monkeypatch):
+def test_profile_button_selects_switches_and_cancels(tmp_path,monkeypatch):
     monkeypatch.setenv("QQEXPORT_HOME",str(tmp_path/"home"))
     accounts = [discover.QQAccount(uin,tmp_path/uin,tmp_path/uin/"nt_db",tmp_path/uin/"nt_data")
                 for uin in ("12345","11111111")]
@@ -22,6 +23,7 @@ def test_bottom_left_button_selects_switches_and_cancels(tmp_path,monkeypatch):
     monkeypatch.setattr(keystore.KeyStore,"load",lambda self,uin:b"synthetic")
     monkeypatch.setattr(sqlcipher,"read_header_and_page1",lambda path:b"synthetic header")
     monkeypatch.setattr(sqlcipher,"detect_params",lambda candidate,header:object())
+    monkeypatch.setattr("qqexport.account_panel.read_identity",lambda account:Identity(account.uin,"合成昵称"))
     opened = []
     def open_source(account,key):
         directory = account.data_dir/str(len(opened))
@@ -50,24 +52,19 @@ def test_bottom_left_button_selects_switches_and_cancels(tmp_path,monkeypatch):
             time.sleep(.01)
         assert predicate()
     def chooser():
-        dialogs = [child for child in root.winfo_children() if isinstance(child,tk.Toplevel)]
-        return dialogs[0] if dialogs else None
+        return app.accounts_panel.popup
     def choose(index):
         app.account_button.invoke()
         wait(lambda:chooser() is not None)
-        dialog = chooser()
-        combo = next(child for child in dialog.winfo_children() if isinstance(child,ttk.Combobox))
-        accept = next(child for child in dialog.winfo_children() if isinstance(child,ttk.Button))
-        assert combo.current()==-1
-        accept.invoke()
-        assert dialog.winfo_exists()
-        combo.current(index)
-        accept.invoke()
+        assert set(app.accounts_panel.rows)=={a.uin for a in accounts}
+        app.accounts_panel.choose(accounts[index])
         wait(lambda:app.uin==accounts[index].uin and app.session is not None)
     try:
         root.update()
         assert app.account_button.winfo_rootx()<app.export_btn.winfo_rootx()
-        assert app.account_button.winfo_rooty()>app.count_label.winfo_rooty()
+        assert app.account_button.winfo_rooty()<app.canvas.winfo_rooty()
+        assert not app.count_label.winfo_ismapped()
+        assert root.title()=="绮录"
         choose(0)
         app._select_chat(0)
         wait(lambda:app.virtual.count==3 and not app._busy)
@@ -86,12 +83,12 @@ def test_bottom_left_button_selects_switches_and_cancels(tmp_path,monkeypatch):
         current = app.session
         app.account_button.invoke()
         wait(lambda:chooser() is not None)
-        chooser().destroy()
+        app.accounts_panel.close()
         assert app.session is current and app.uin==accounts[1].uin
         assert app.preferences.last_account==accounts[1].uin
         monkeypatch.setattr(keystore.KeyStore,"load",lambda self,uin:None)
         app._open_account(accounts[0])
-        wait(lambda:"点击左下角选择账号" in app.status.cget("text"))
+        wait(lambda:"点击左上角切换账号" in app.status.cget("text"))
         assert "RuntimeError" not in app.status.cget("text")
         assert app.session is current and app.uin==accounts[1].uin
         assert app.virtual.count==5

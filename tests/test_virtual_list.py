@@ -276,7 +276,7 @@ def test_product_paging_selection_dates_and_chat_switch(tmp_path,monkeypatch):
         src.meta["synthetic"] = True
         app.gui_avatars.online = False
         assert not root.cget("menu")
-        assert app.export_btn.cget("text")=="导出…"
+        assert app.export_btn.cget("text")=="导出记录"
         assert app.next_btn.cget("text")=="下一步"
         completed = []
         monkeypatch.setattr(app,"_export_done",lambda report,output:completed.append(report))
