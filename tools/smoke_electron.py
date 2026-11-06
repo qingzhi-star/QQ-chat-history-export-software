@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import sys
 import time
 import zipfile
@@ -50,8 +51,11 @@ def main():
         except FileNotFoundError:
             pass
         installed = work/"installed"
+        # 与用户从桌面运行相同：安装器也在普通用户目录，不继承开发工作区 ACL。
+        local_installer = work/"Setup.exe"
+        shutil.copy2(installer,local_installer)
         # 使用真实最终安装器；不更改系统 TEMP，不创建本人桌面快捷方式。
-        subprocess.run([str(installer),"/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/SP-",
+        subprocess.run([str(local_installer),"/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/SP-",
                         f"/DIR={installed}","/TASKS="],check=True,timeout=120)
         assert (installed/NAME).is_file()
         uninstall = installed/"unins000.exe"

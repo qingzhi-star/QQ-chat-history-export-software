@@ -8,9 +8,14 @@ const os = require('node:os');
   const root = path.resolve(__dirname, '../..');
   const home = await fs.mkdtemp(path.join(os.tmpdir(),'qilu-electron-smoke-'));
   const executablePath = process.env.QILU_PACKAGED_EXE || process.env.QILU_ELECTRON_RUNTIME || require('electron');
+  const appEnv = {...process.env,QILU_DEMO:'1',QILU_TEST_HOME:path.join(home,'electron'),QQEXPORT_HOME:path.join(home,'core'),PYTHONIOENCODING:'utf-8'};
+  if(process.env.QILU_PACKAGED_EXE){
+    appEnv.PATH=[path.join(process.env.SystemRoot,'System32'),process.env.SystemRoot].join(path.delimiter);
+    delete appEnv.QILU_PYTHON;delete appEnv.PYTHONPATH;delete appEnv.PYTHONHOME;
+  }
   const app = await electron.launch({ executablePath, args: process.env.QILU_PACKAGED_EXE ? [] : [path.join(root,'desktop')],
-    env: {...process.env,QILU_DEMO:'1',QILU_TEST_HOME:path.join(home,'electron'),QQEXPORT_HOME:path.join(home,'core'),PYTHONIOENCODING:'utf-8'},timeout:45000 });
-  const report = { packaged: Boolean(process.env.QILU_PACKAGED_EXE), errors: [] };
+    env: appEnv,timeout:45000 });
+  const report = { packaged: Boolean(process.env.QILU_PACKAGED_EXE), systemRuntimeRemoved: Boolean(process.env.QILU_PACKAGED_EXE), errors: [] };
   try {
     const page = await app.firstWindow();
     page.on('pageerror', error=>report.errors.push(error.message));
