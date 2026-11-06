@@ -145,18 +145,22 @@ def records(path,root=None):
     root = Path(root or path.parent)
     with path.open("rb") as stream:
         while line := stream.readline(MAX_RECORD+1):
-            if len(line)>MAX_RECORD or not line.endswith(b"\n"):
-                raise SnapshotError("快照行过大或被截断")
-            try:
-                record = json.loads(line)
-                if record["schema_version"]!=1:
-                    raise ValueError
-                message = from_data(record["message"],root)
-                if logical_hash(message)!=record["fingerprint"]:
-                    raise ValueError
-            except (ValueError,KeyError,TypeError):
-                raise SnapshotError("快照消息校验失败") from None
-            yield message
+            yield decode_record(line,root)
+
+
+def decode_record(line,root):
+    if len(line)>MAX_RECORD or not line.endswith(b"\n"):
+        raise SnapshotError("快照行过大或被截断")
+    try:
+        record = json.loads(line)
+        if type(record["schema_version"]) is not int or record["schema_version"]!=1:
+            raise ValueError
+        message = from_data(record["message"],root)
+        if logical_hash(message)!=record["fingerprint"]:
+            raise ValueError
+    except (ValueError,KeyError,TypeError):
+        raise SnapshotError("快照消息校验失败") from None
+    return message
 
 
 def copy_file(source,target,cancel=None,*,count_lines=False):

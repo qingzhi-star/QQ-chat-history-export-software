@@ -62,8 +62,9 @@ class TaskRunner:
 
 
 class DataSession:
-    def __init__(self, source, repository):
+    def __init__(self, source, repository,cleanup=None):
         self.source, self.repository = source, repository
+        self.cleanup = cleanup
         self.lock, self.pins, self.retired = threading.RLock(), 0, False
 
     def pin(self):
@@ -90,10 +91,15 @@ class DataSession:
 
     def _cleanup(self):
         if self.retired and self.pins == 0 and self.source is not None:
-            try:
-                if hasattr(self,"search"):
-                    self.search.close()
-                self.repository.close()
-            finally:
-                self.source.close()
-                self.source = None
+            source,self.source = self.source,None
+            def finish():
+                try:
+                    if hasattr(self,"search"):
+                        self.search.close()
+                    self.repository.close()
+                finally:
+                    source.close()
+            if self.cleanup:
+                self.cleanup(finish)
+            else:
+                finish()

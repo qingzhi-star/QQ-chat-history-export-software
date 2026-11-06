@@ -133,6 +133,24 @@ def build_parser() -> argparse.ArgumentParser:
     batch.add_argument("--incremental",action="store_true",help="整会话增量备份，保存明文快照")
     batch.add_argument("--rebuild",action="store_true",help="明确覆盖旧增量备份进行全量重建")
 
+    arc = sub.add_parser("archive",help="创建、校验及离线导出 .qqarchive")
+    arcsub = arc.add_subparsers(dest="archive_command",required=True)
+    create = arcsub.add_parser("create")
+    _add_account_args(create)
+    arc_targets = create.add_mutually_exclusive_group(required=True)
+    arc_targets.add_argument("--chat",action="append",default=[])
+    arc_targets.add_argument("--all",action="store_true")
+    create.add_argument("--yes",action="store_true")
+    create.add_argument("--out",type=Path,required=True)
+    create.add_argument("--encrypt",action="store_true",help="交互输入密码，不接受命令行密码")
+    create.add_argument("--overwrite",action="store_true")
+    verify = arcsub.add_parser("verify")
+    verify.add_argument("path",type=Path)
+    offline = arcsub.add_parser("export")
+    offline.add_argument("path",type=Path)
+    offline.add_argument("--out",type=Path,required=True)
+    offline.add_argument("--format",type=_parse_formats,default="html")
+
     exp = sub.add_parser("export", help="导出会话为 txt/html/pdf")
     _add_account_args(exp)
     target = exp.add_mutually_exclusive_group(required=True)
@@ -420,10 +438,57 @@ def _cmd_batch(args):
         source.close()
 
 
+def _archive_password():
+    from qqexport.errors import UserError
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        value = getpass.getpass("归档密码（不保存、不回显）：")
+    if any(issubclass(w.category,getpass.GetPassWarning) for w in caught):
+        raise UserError("当前终端无法隐藏输入，请改用图形界面的归档密码输入")
+    return value
+
+
+def _cmd_archive(args):
+    from qqexport.export.archive import ArchiveReader,create_archive,encrypted
+    from qqexport.errors import UserError
+    source = reader = None
+    try:
+        if args.archive_command=="create":
+            source = _open_source(args)
+            if source is None:
+                return EXIT_FAIL
+            ids = [info.chat_id for info in source.chats()] if args.all else args.chat
+            result = create_archive(source,ids,args.out,password=_archive_password() if args.encrypt else None,
+                                    overwrite=args.overwrite)
+            print(json.dumps(result,ensure_ascii=False))
+        else:
+            reader = ArchiveReader(args.path,password=_archive_password() if encrypted(args.path) else None)
+            if args.archive_command=="verify":
+                print(json.dumps({"ok":True,"chats":len(reader.infos),"messages":sum(i.messages for i in reader.infos)}))
+            else:
+                source = reader.source()
+                report = orchestrator.export_chats(source,[i.chat_id for i in source.chats()],
+                    orchestrator.ExportOptions(formats=set(args.format.split(",")),out_base=args.out))
+                print(report.to_text())
+                if report.pdf_error or report.chats_exported!=report.chats_requested:
+                    return EXIT_FAIL
+        return EXIT_OK
+    except Exception as exc:
+        print("错误："+(str(exc) if isinstance(exc,UserError) else f"归档操作失败（{type(exc).__name__}）"),file=sys.stderr)
+        return EXIT_FAIL
+    finally:
+        if source is not None:
+            source.close()
+        if reader is not None:
+            reader.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     _force_utf8_stdio()
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command=="archive" and args.archive_command=="create" and args.all and not args.yes:
+        parser.error("归档全部会话请加 --yes 明确确认")
     if args.command == "batch":
         if args.all and not args.yes:
             parser.error("导出全部会话请加 --yes 明确确认")
@@ -462,6 +527,8 @@ def _dispatch(args) -> int:
         return _cmd_search(args)
     if args.command == "batch":
         return _cmd_batch(args)
+    if args.command == "archive":
+        return _cmd_archive(args)
     if args.command == "export":
         return _cmd_export(args)
     if args.command == "gui":

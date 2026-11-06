@@ -51,8 +51,12 @@ class ExportSource:
     @classmethod
     def open(cls, account: discover.QQAccount, passphrase: bytes, *,
              work_dir: Path | None = None) -> "ExportSource":
-        tmp = tempfile.TemporaryDirectory(prefix="qqexport-export-",
-                                          dir=str(work_dir) if work_dir else None)
+        if work_dir is None:
+            from qqexport.temporary import workspace
+            tmp = workspace("exports")
+        else:
+            import os
+            tmp = tempfile.TemporaryDirectory(prefix=f".tmp-{os.getpid()}-",dir=str(work_dir))
         root = Path(tmp.name)
         warnings: list[str] = []
         try:

@@ -193,12 +193,16 @@ def _pid_alive(pid: int) -> bool:
         return False
     try:
         import ctypes
-        kernel32 = ctypes.windll.kernel32
+        from ctypes import wintypes
+        kernel32 = ctypes.WinDLL("kernel32",use_last_error=True)
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD,wintypes.BOOL,wintypes.DWORD]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
         handle = kernel32.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED
         if handle:
             kernel32.CloseHandle(handle)
             return True
-        return False
+        return ctypes.get_last_error()!=87  # INVALID_PARAMETER 为已不存在；访问拒绝保守保留。
     except Exception:
         try:
             os.kill(pid, 0)
@@ -252,6 +256,9 @@ def _commit_dir(work: Path, final: Path) -> None:
 
 
 def validate_destination(source, destination):
+    for protected in source.meta.get("protected_dirs",()):
+        if Path(destination).resolve().is_relative_to(Path(protected).resolve()):
+            raise ValueError("导出不能写入只读资料或临时数据目录")
     account = source.meta.get("account")
     if account is not None and not source.meta.get("synthetic"):
         if Path(destination).resolve().is_relative_to(account.data_dir.resolve()):
@@ -343,7 +350,7 @@ def export_chats(source: ExportSource, chat_ids: list[str],
                 chat = Chat(kind=info.kind, peer_id=info.peer, title=info.title,
                             subtitle=info.subtitle, messages=relinked)
                 html_mod.write_html(chat, work, html_mod.HtmlOptions(
-                    now=now, account_uin=source.account_uin,
+                    now=now, account_uin=source.meta.get("display_account",source.account_uin),
                     shard_size=10 ** 9, emoji_map=emoji,
                     link_files=keep_html,cancel=opts.cancel))
                 if "pdf" in formats:

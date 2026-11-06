@@ -41,9 +41,64 @@ class ProductApp(App):
         self.tools_menu.add_command(label="搜索消息",command=self._show_search)
         self.tools_menu.add_command(label="批量导出…",command=self._show_batch)
         self.tools_menu.add_command(label="恢复导出队列…",command=self._resume_queue)
+        self.tools_menu.add_command(label="导出归档…",command=self._archive_export)
+        self.tools_menu.add_command(label="打开/校验归档…",command=self._archive_open)
+        for label,action in [("归档导入资料库…","import_library"),("打开本机资料库…","open_library"),("清空本机资料库…","clear_library")]:
+            self.tools_menu.add_command(label=label,command=lambda action=action:self._library_action(action))
         menu = tk.Menu(self.root)
         menu.add_cascade(label="工具",menu=self.tools_menu)
         self.root.configure(menu=menu)
+
+    def _archive_export(self):
+        if self.session is not None:
+            from qqexport.archive_ui import export_archive
+            export_archive(self)
+
+    def _archive_open(self):
+        from qqexport.archive_ui import open_archive
+        open_archive(self)
+
+    def mount_archive(self,reader):
+        self.mount_offline(reader.source(),"离线归档已校验")
+
+    def _library_action(self,action):
+        from qqexport import archive_ui
+        getattr(archive_ui,action)(self)
+
+    def mount_offline(self,source,label):
+        from qqexport.export.archive import ArchiveRepository
+        old = self.session
+        self._source_gen += 1
+        self._render_gen += 1
+        if self._watch_id:
+            self.root.after_cancel(self._watch_id)
+            self._watch_id = None
+        self.session = DataSession(source,ArchiveRepository(source),cleanup=self._defer_cleanup)
+        self.batch_selected.clear()
+        self._thumbs.clear()
+        self.current_chat_id = None
+        self.uin = None
+        self._loaded(source,source.chats(),{}, {})
+        self.virtual.reset(0)
+        if old:
+            old.retire()
+        self.status.configure(text=label+"；选择会话浏览，可搜索或导出，不需要 QQ")
+
+    def _view_media(self,media):
+        if self.source and self.source.meta.get("archive"):
+            from qqexport.archive_ui import open_attachment
+            open_attachment(self,media)
+        else:
+            super()._view_media(media)
+
+    def _defer_cleanup(self,work):
+        if self.tasks.closed:
+            work()
+        else:
+            try:
+                self.tasks.submit(work,lambda _:None,self._error)
+            except RuntimeError:
+                work()
 
     def _show_batch(self):
         if self.session is not None:
@@ -135,7 +190,11 @@ class ProductApp(App):
                 self._choose_account(accounts)
             else:
                 self.status.configure(text="未找到已登录账号，请检查 QQ 或手动指定数据目录")
-        self.tasks.submit(lambda: discover.discover_accounts(explicit=self.data_dir), ready, self._error)
+        def discover_accounts():
+            from qqexport.temporary import cleanup_stale
+            cleanup_stale()
+            return discover.discover_accounts(explicit=self.data_dir)
+        self.tasks.submit(discover_accounts, ready, self._error)
 
     def _choose_account(self, accounts):
         dialog = tk.Toplevel(self.root)
@@ -167,7 +226,7 @@ class ProductApp(App):
             source = ExportSource.open(account,key)
             try:
                 repo = MessageRepository(source)
-                session = DataSession(source,repo)
+                session = DataSession(source,repo,cleanup=self._defer_cleanup)
                 session.infos = source.chats()
                 session.metas = {}
                 for info in session.infos:
@@ -252,6 +311,10 @@ class ProductApp(App):
         if (gen,index) in self._image_pending:
             return
         self._image_pending.add((gen,index))
+        try:
+            release = self.session.pin() if self.session is not None else lambda:None
+        except RuntimeError:
+            return
         def decode():
             from PIL import Image
             try:
@@ -276,7 +339,8 @@ class ProductApp(App):
                     self._thumbs.popitem(last=False)
                 if gen == self._render_gen:
                     self.virtual.image_ready(index,image)
-        self.tasks.submit(decode,ready,self._error)
+        future = self.tasks.submit(decode,ready,self._error)
+        future.add_done_callback(lambda _:release())
 
     def _open_export(self):
         if self.selected_idx is None or not self.virtual.count:

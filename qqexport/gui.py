@@ -318,6 +318,12 @@ class App:
         account = source.meta.get("account")
         who = getattr(account, "uin", "?")
         self.count_label.configure(text=f"已识别 QQ {who} · 共 {len(infos)} 个会话")
+        if account is None:
+            self.count_label.configure(text=f"{source.meta.get('display_account','离线资料')} · 共 {len(infos)} 个会话")
+            self._wal_path = self._db_path = None
+            self._profile_paths = []
+            self._profile_mtime = self._wal_mtime = 0
+            return
         self._wal_path = account.db_dir / "nt_msg.db-wal"
         self._db_path = account.db_dir / "nt_msg.db"
         self._profile_paths = [account.db_dir / "profile_info.db",

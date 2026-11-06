@@ -131,5 +131,13 @@ def test_product_paging_selection_dates_and_chat_switch(tmp_path,monkeypatch):
         wait(lambda: progress.tree.item("0","values") and progress.tree.item("0","values")[1]=="成功")
         assert job.tasks[0].messages==101
         progress.close()
+        from qqexport.export.archive import create_archive,ArchiveReader
+        archive = tmp_path/"synthetic.qqarchive"
+        create_archive(repo,["c2c:u_a"],archive)
+        reader = ArchiveReader(archive)
+        app.mount_archive(reader)
+        app._select_chat(0)
+        wait(lambda: app.virtual.count==101 and bool(app.virtual.pages))
+        assert app.source.meta["archive"] and app._watch_id is None
     finally:
         app.close()
