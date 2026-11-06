@@ -84,6 +84,16 @@ def test_format_dialog_keeps_allowed_formats_and_callback(tmp_path):
         root.update()
         assert set(dialog.format_cards)=={"txt","html"}
         assert not dialog.vars["pdf"].get()
+        card = dialog.format_cards["html"]
+        card.event_generate("<Button-1>",x=card.winfo_width()-10,y=card.winfo_height()//2)
+        assert dialog.vars["html"].get()
+        assert card.cget("bg")=="#f0eafa"
+        card.description.event_generate("<Button-1>")
+        assert not dialog.vars["html"].get()
+        card.check.event_generate("<Button-1>")
+        assert dialog.vars["html"].get()
+        card.toggle()
+        assert not dialog.vars["html"].get()
         dialog._ok()
         assert selected==[({"txt"},tmp_path)]
     finally:

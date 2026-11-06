@@ -1417,7 +1417,7 @@ class DateRangeDialog(tk.Toplevel):
 class FormatDialog(tk.Toplevel):
     def __init__(self, parent, default_out: str, *, on_ok, allowed_formats=None,default_formats=None,summary=None):
         super().__init__(parent)
-        from qqexport.ui import ActionButton,center_dialog,INK,MUTED,SURFACE
+        from qqexport.ui import ActionButton,ChoiceCard,center_dialog,INK,MUTED,SURFACE
         from qqexport.branding import apply_icon
         self.withdraw()
         self.on_ok = on_ok
@@ -1447,13 +1447,8 @@ class FormatDialog(tk.Toplevel):
             if allowed_formats is not None and key not in allowed_formats:
                 self.vars[key].set(False)
                 continue
-            card = tk.Frame(body,bg="#ffffff",highlightthickness=1,highlightbackground="#e4dfed",padx=12,pady=8)
+            card = ChoiceCard(body,title=labels[key][0],description=labels[key][1],variable=self.vars[key])
             card.pack(fill="x",pady=(0,7))
-            check = tk.Checkbutton(card,text=labels[key][0],variable=self.vars[key],bg="#ffffff",fg=INK,
-                activebackground="#ffffff",selectcolor="#eee7fc",font=("Microsoft YaHei UI",10,"bold"),
-                anchor="w",cursor="hand2",bd=0,highlightthickness=0)
-            check.pack(anchor="w")
-            tk.Label(card,text=labels[key][1],bg="#ffffff",fg=MUTED,font=("Microsoft YaHei UI",9)).pack(anchor="w",padx=24)
             self.format_cards[key] = card
         tk.Label(body,text="保存位置",font=("Microsoft YaHei UI",10,"bold"),bg=SURFACE,fg=INK).pack(anchor="w",pady=(13,8))
         row = tk.Frame(body,bg=SURFACE)
