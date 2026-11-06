@@ -114,7 +114,8 @@ def test_profile_button_selects_switches_and_cancels(tmp_path,monkeypatch):
         current = app.session
         monkeypatch.setattr(keyscan,"scan_key",lambda verify:None)
         app._open_account(accounts[1],auto_key=True)
-        wait(lambda:"未能自动获取" in app.status.cget("text"))
+        from qqexport.account_access import AccountAccessError
+        wait(lambda:AccountAccessError.MESSAGES["not_found"] in app.status.cget("text"))
         assert app.session is current and app.uin==accounts[0].uin
         assert app.virtual.count==3 and "disabled" not in app.account_button.state()
         monkeypatch.setattr(discover,"discover_accounts",lambda **kwargs:[])
