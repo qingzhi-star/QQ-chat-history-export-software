@@ -15,6 +15,8 @@ const os=require('node:os');
   const application=await electron.launch({executablePath,args:process.env.QILU_PACKAGED_EXE?[]:[path.resolve(__dirname,'..')],env,timeout:45000});
   try{
     const page=await application.firstWindow();
+    await page.locator('#privacy-policy-version').filter({hasText:'条款版本'}).waitFor();
+    await page.locator('#privacy-sensitive').check();await page.locator('#privacy-accept').click();
     await page.locator('.chat').first().waitFor();
     const archive=process.env.QILU_PIPELINE_ARCHIVE,out=process.env.QILU_PIPELINE_OUTPUT;
     assert.ok(archive&&out);

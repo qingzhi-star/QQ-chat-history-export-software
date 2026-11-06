@@ -1,0 +1,39 @@
+name: privacy-pages
+on:
+  push:
+    branches: [main]
+    paths: [privacy.md, 'docs/site/**', 'docs/images/**', tools/build_privacy.py, desktop/privacy-policy.json, desktop/renderer/privacy.html, desktop/renderer/privacy.css, qqexport/assets/qilu.png, .github/workflows/privacy-pages.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: privacy-pages
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - uses: actions/configure-pages@v5
+      - run: python tools/build_privacy.py --check --site build/privacy-site
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: build/privacy-site
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment

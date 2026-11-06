@@ -24,6 +24,17 @@
     </section>
   </main>
   <div id="toast" role="alert" hidden></div>
+  <dialog id="privacy-dialog" aria-labelledby="privacy-title" aria-describedby="privacy-summary">
+    <div class="privacy-heading"><img src="brand/qilu.png" alt="绮录"><div><h2 id="privacy-title">请阅读隐私条款</h2><p id="privacy-policy-version" class="muted"></p></div></div>
+    <p id="privacy-summary">绮录会在本机读取你选择的账号及聊天记录。请先阅读全文，了解访问范围、敏感信息风险和删除方式；同意后才开始读取。</p>
+    <iframe src="privacy.html" title="绮录隐私条款全文" class="privacy-document" sandbox></iframe>
+    <a id="privacy-online" href="https://qingzhi-star.github.io/QL-qq-chat-history-exporter/privacy.html" target="_blank" rel="noopener noreferrer">通过 GitHub Pages 在线阅读完整条款 ↗</a>
+    <p class="privacy-network-note muted">在线阅读由系统浏览器访问 GitHub，可能产生 IP 等访问日志；上方本机全文无需联网。</p>
+    <label class="privacy-option"><input id="privacy-sensitive" type="checkbox"><span>我已知悉敏感信息处理说明，确认具备合法处理依据，并单独同意为本机浏览、检索和备份处理所选记录中可能存在的敏感个人信息。</span></label>
+    <label class="privacy-option"><input id="privacy-avatars" type="checkbox"><span>允许联网加载 QQ 公开头像（可选；向腾讯发送相关 QQ 号或群号及网络请求信息）。</span></label>
+    <p id="privacy-error" role="alert"></p>
+    <div class="dialog-actions"><button id="privacy-decline">拒绝并退出</button><button id="privacy-accept" class="primary" disabled>同意并进入</button></div>
+  </dialog>
   <dialog id="export-dialog">
     <form method="dialog"><button class="dialog-close" aria-label="关闭">×</button></form>
     <h2>把这段对话，收进绮录</h2><p id="export-summary" class="muted"></p>

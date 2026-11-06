@@ -3,10 +3,12 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { CoreBridge } = require('./bridge.cjs');
 const { PdfPrinter } = require('./pdf.cjs');
+const { PrivacyGate } = require('./privacy.cjs');
 const NAME = '绮录QQ聊天记录导出软件';
 const ROOT = path.resolve(__dirname, '..');
 const DEVELOPMENT_PYTHON = process.env.QILU_PYTHON || 'python';
 let window, core, outputDirectory, quitting = false;
+const privacy=PrivacyGate.load(__dirname,app.isPackaged?path.join(__dirname,'privacy.md'):path.join(ROOT,'privacy.md'));
 const printer = new PdfPrinter();
 const allowed = new Set(['boot', 'switch', 'refresh', 'messages', 'media', 'openMedia', 'search', 'range']);
 protocol.registerSchemesAsPrivileged([{ scheme: 'qilu', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
@@ -19,14 +21,16 @@ function senderAllowed(event) {
   return window && event.sender === window.webContents && event.senderFrame === window.webContents.mainFrame
     && event.senderFrame.url.startsWith('qilu://app/');
 }
-function validate(event) {
+function validateSender(event) {
   if (!senderAllowed(event)) throw new Error('不允许的窗口请求');
 }
+function validate(event) {validateSender(event);privacy.authorize();}
 function launchCore() {
   const executable = app.isPackaged ? path.join(process.resourcesPath, 'core', 'qilu-core.exe') : DEVELOPMENT_PYTHON;
   const args = app.isPackaged ? [] : ['-m', 'qqexport.electron_backend'];
   return new CoreBridge(executable, args, { cwd: app.isPackaged ? process.resourcesPath : ROOT,
-    env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1',QILU_ELECTRON_PDF:'1' },
+    env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1',QILU_ELECTRON_PDF:'1',
+      QILU_ALLOW_AVATARS:privacy.avatars?'1':'0' },
     printPdf: request=>printer.print(request),cancelPdf:id=>printer.cancel(id) });
 }
 app.whenReady().then(async () => {
@@ -39,7 +43,6 @@ app.whenReady().then(async () => {
     if (!file.startsWith(root + path.sep)) return new Response('', { status: 403 });
     return net.fetch(pathToFileURL(file).href);
   });
-  core = launchCore();
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
   window = new BrowserWindow({ width: 1160, height: 780, minWidth: 900, minHeight: 600,
@@ -51,6 +54,16 @@ app.whenReady().then(async () => {
   window.webContents.on('will-navigate', event => event.preventDefault());
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.once('ready-to-show', () => window.show());
+  ipcMain.handle('privacyInfo',event=>{validateSender(event);return privacy.info();});
+  ipcMain.handle('privacyOpen',event=>{validateSender(event);return shell.openExternal(privacy.info().url);});
+  ipcMain.handle('privacyAccept',(event,value)=>{
+    validateSender(event);
+    if(privacy.accepted)return true;
+    privacy.accept(value);
+    try{core=launchCore();}catch(error){privacy.accepted=false;throw error;}
+    return true;
+  });
+  ipcMain.handle('privacyDecline',event=>{validateSender(event);app.quit();});
   ipcMain.handle('core', (event, method, params) => {
     validate(event);
     if (!allowed.has(method)) throw new Error('不支持的操作');

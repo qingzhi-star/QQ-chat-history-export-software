@@ -184,6 +184,22 @@ def test_offline_cached_key_opens_and_exports_real_encrypted_database(tmp_path,m
     monkeypatch.setattr(keyscan,"scan_key",lambda *args:pytest.fail("offline must not read QQ process"))
     monkeypatch.setattr("urllib.request.urlopen",lambda *args,**kwargs:pytest.fail("offline export must not request network"))
     monkeypatch.setattr(discover,"discover_accounts",lambda **kwargs:[selected])
+    # 四项真实处理必须同时就绪：串行实现会在第一个屏障超时，不能伪造加速。
+    from qqexport.core import companions
+    from qqexport.qq import media
+    barrier=threading.Barrier(4)
+    real_decrypt,real_companion,real_index=decrypt.decrypt_database,companions.decrypt_companion,media.build_index
+    def parallel(fn):
+        def run(*args,**kwargs):
+            barrier.wait(timeout=5)
+            return fn(*args,**kwargs)
+        return run
+    monkeypatch.setattr(decrypt,"decrypt_database",parallel(real_decrypt))
+    monkeypatch.setattr(companions,"decrypt_companion",parallel(real_companion))
+    monkeypatch.setattr(media,"build_index",parallel(real_index))
+    # 账号显示资料读取不参与源准备屏障，只用合成身份。
+    from qqexport.account_panel import Identity
+    monkeypatch.setattr("qqexport.electron_backend.read_identity",lambda account,**kwargs:Identity(account.uin,"合成账号"))
     value=DesktopBackend()
     try:
         state=value.dispatch("boot",{})
@@ -197,3 +213,19 @@ def test_offline_cached_key_opens_and_exports_real_encrypted_database(tmp_path,m
     finally:
         value.close()
     assert hashlib.sha256(selected.msg_db.read_bytes()).digest()==before
+
+
+def test_avatar_requests_require_separate_permission(tmp_path,monkeypatch):
+    monkeypatch.delenv("QILU_ALLOW_AVATARS",raising=False)
+    value=backend(tmp_path,monkeypatch)
+    fetch=Mock(return_value=None)
+    monkeypatch.setattr("qqexport.electron_backend.avatars.fetch_avatar",fetch)
+    try:
+        token=value.portrait("12345")
+        assert value.media(token) is None
+        fetch.assert_not_called()
+        value.allow_avatars=True
+        assert value.media(token) is None
+        fetch.assert_called_once_with("12345")
+    finally:
+        value.close()

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import sqlite3
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -59,25 +60,27 @@ class ExportSource:
             tmp = tempfile.TemporaryDirectory(prefix=f".tmp-{os.getpid()}-",dir=str(work_dir))
         root = Path(tmp.name)
         warnings: list[str] = []
+        def companion(name,warning):
+            try:
+                return companions.decrypt_companion(account.db_dir/name,passphrase,root/"comp"),None
+            except companions.CompanionError:
+                return None,warning
         try:
-            result = decrypt.decrypt_database(account, passphrase, dst_dir=root / "msg")
-            if result.status == "failed" or not result.plaintext_db.is_file():
-                raise ExportError("主库解密失败")
-            profile = group = None
-            try:
-                profile = companions.decrypt_companion(
-                    account.db_dir / "profile_info.db", passphrase, root / "comp")
-            except companions.CompanionError:
-                warnings.append("profile_info.db 解密失败，显示名回退")
-            try:
-                group = companions.decrypt_companion(
-                    account.db_dir / "group_info.db", passphrase, root / "comp")
-            except companions.CompanionError:
-                warnings.append("group_info.db 解密失败，群名/名片回退")
+            # 独立文件各自快照/认证，最多四个工作线程；离开线程池后才清理副本。
+            with ThreadPoolExecutor(max_workers=4,thread_name_prefix="qilu-source") as pool:
+                message_job=pool.submit(decrypt.decrypt_database,account,passphrase,dst_dir=root/"msg")
+                profile_job=pool.submit(companion,"profile_info.db","profile_info.db 解密失败，显示名回退")
+                group_job=pool.submit(companion,"group_info.db","group_info.db 解密失败，群名/名片回退")
+                index_job=pool.submit(media.build_index,account.media_dir,previous=media_index) if media_index is not None else pool.submit(media.build_index,account.media_dir)
+                result=message_job.result()
+                if result.status=="failed" or not result.plaintext_db.is_file():
+                    raise ExportError("主库解密失败")
+                profile,profile_warning=profile_job.result()
+                group,group_warning=group_job.result()
+                index=index_job.result()
+            warnings.extend(warning for warning in (profile_warning,group_warning) if warning)
             contacts_obj = contacts.Contacts.load(profile, group,
                                                   account_uin=account.uin)
-            index = (media.build_index(account.media_dir,previous=media_index) if media_index is not None
-                     else media.build_index(account.media_dir))
             return cls(result.plaintext_db, contacts_obj, index, account.uin,
                        warnings=warnings, tmp=tmp,
                        meta={"account": account, "decrypt": result,

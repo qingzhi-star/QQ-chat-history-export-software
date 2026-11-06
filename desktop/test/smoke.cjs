@@ -19,12 +19,28 @@ const os = require('node:os');
   try {
     const page = await app.firstWindow();
     page.on('pageerror', error=>report.errors.push(error.message));
+    await page.locator('#privacy-dialog').waitFor();
+    assert.equal(await page.locator('.chat').count(),0);
+    assert.equal(await page.locator('#privacy-avatars').isChecked(),false);
+    const denied=await page.evaluate(async()=>Promise.all([
+      ()=>window.qilu.boot(),()=>window.qilu.refresh(),()=>window.qilu.messages({chat:'synthetic'}),
+      ()=>window.qilu.media({token:'synthetic'}),()=>window.qilu.export({}),
+      ()=>window.qilu.tool({action:'settingsGet'}),()=>window.qilu.chooseFolder(),()=>window.qilu.openOutput()
+    ].map(async call=>{try{await call();return false;}catch(error){return error.message.includes('隐私条款');}})));
+    assert.ok(denied.every(Boolean));
+    await page.locator('#privacy-policy-version').filter({hasText:'条款版本'}).waitFor();
+    await page.frameLocator('.privacy-document').locator('h1').waitFor();
+    await page.screenshot({path:path.join(root,'build/electron-synthetic-privacy.png')});
+    await page.locator('#privacy-sensitive').check();await page.locator('#privacy-accept').click();
+    report.privacyGate=true;
     await page.locator('.chat').first().waitFor({timeout:30000});
     assert.equal(await page.title(),'绮录QQ聊天记录导出软件');
     const isolation = await page.evaluate(()=>({node:typeof require,process:typeof process,api:typeof window.qilu}));
     assert.deepEqual(isolation,{node:'undefined',process:'undefined',api:'object'});
+    const firstMessageStarted=Date.now();
     await page.locator('.chat').first().click();
     await page.locator('.message .message-body').first().waitFor();
+    report.firstMessageMs=Date.now()-firstMessageStarted;
     await page.locator('#messages').evaluate(element=>element.scrollTop=0);
     await page.locator('.message[data-index="0"]').waitFor();
     await page.locator('.quote').first().waitFor();
@@ -66,6 +82,36 @@ const os = require('node:os');
     assert.ok(metrics.maxNodes<=60,JSON.stringify(metrics));
     assert.ok(metrics.maxGap<5,JSON.stringify(metrics));
     report.scroll=metrics;
+    await app.evaluate(({app})=>{
+      const requireMain=process.getBuiltinModule('module').createRequire(process.getBuiltinModule('path').join(app.getAppPath(),'package.json'));
+      const {CoreBridge}=requireMain('./bridge.cjs');
+      const original=CoreBridge.prototype.call;
+      globalThis.qiluMessageProbe={active:0,max:0,calls:0,sizes:[],restore:()=>{CoreBridge.prototype.call=original;}};
+      CoreBridge.prototype.call=async function(method,params){
+        if(method!=='messages')return original.call(this,method,params);
+        const probe=globalThis.qiluMessageProbe;probe.calls++;probe.active++;probe.max=Math.max(probe.max,probe.active);probe.sizes.push(params.size);
+        try{await new Promise(resolve=>setTimeout(resolve,40));return await original.call(this,method,params);}
+        finally{probe.active--;}
+      };
+    });
+    try{
+      await page.locator('#messages').evaluate(async element=>{
+        for(let i=1;i<=24;i++){
+          element.scrollTop=(element.scrollHeight-element.clientHeight)*((i*.61803398875)%1);
+          await new Promise(resolve=>requestAnimationFrame(resolve));
+        }
+      });
+      const settling=Date.now();
+      await page.waitForFunction(()=>{
+        const viewport=document.getElementById('messages').getBoundingClientRect();
+        const rows=[...document.querySelectorAll('.message')].filter(row=>{const r=row.getBoundingClientRect();return r.bottom>viewport.top&&r.top<viewport.bottom;});
+        return rows.length>0&&rows.every(row=>!row.textContent.includes('正在加载…'));
+      },null,{timeout:3000,polling:'raf'});
+      const settledMs=Date.now()-settling;
+      const probe=await app.evaluate(()=>({max:globalThis.qiluMessageProbe.max,calls:globalThis.qiluMessageProbe.calls,sizes:globalThis.qiluMessageProbe.sizes}));
+      assert.ok(probe.max<=2);assert.ok(probe.sizes.every(size=>size===32));assert.ok(settledMs<750);
+      report.randomJump={settledMs,maxRequests:probe.max,calls:probe.calls,simulatedPageDelayMs:40};
+    }finally{await app.evaluate(()=>globalThis.qiluMessageProbe.restore());}
     await page.locator('#messages').evaluate(element=>element.scrollTop=0);
     await page.waitForTimeout(200);
     const bounds=await page.locator('#messages').evaluate(element=>{element.scrollTop=-100;return element.scrollTop;});
@@ -114,6 +160,16 @@ const os = require('node:os');
     await page.locator('#job-message').filter({hasText:'当前没有任务'}).waitFor();
     await page.locator('#job-close').click();
     report.integratedTools=true;
+    const declined=await electron.launch({executablePath,args:process.env.QILU_PACKAGED_EXE?[]:[path.join(root,'desktop')],
+      env:{...appEnv,QQEXPORT_HOME:path.join(home,'declined-core'),QILU_TEST_HOME:path.join(home,'declined-electron')},timeout:45000});
+    const declinedProcess=declined.process();
+    try{
+      const refusal=await declined.firstWindow();await refusal.locator('#privacy-dialog').waitFor();
+      await Promise.all([declined.waitForEvent('close'),refusal.locator('#privacy-decline').click()]);
+      assert.equal(declinedProcess.exitCode,0);
+      assert.equal(await fs.access(path.join(home,'declined-core')).then(()=>true,()=>false),false);
+      report.privacyDeclined=true;
+    }finally{if(declinedProcess.exitCode===null)await declined.close();}
     assert.deepEqual(report.errors,[]);
     report.pass=true;
     await fs.mkdir(path.join(root,'build'),{recursive:true});

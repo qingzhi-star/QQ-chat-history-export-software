@@ -1,8 +1,26 @@
 # 绮录 Electron 桌面端
 
-当前源码版本 `0.3.1`，已验证平台为 Windows 11 x64，正式资产以 GitHub Release 为准。软件全称为「绮录QQ聊天记录导出软件」，品牌及图标继续沿用
+当前源码版本 `0.4.0`，已验证平台为 Windows 11 x64，正式资产以 GitHub Release 为准。软件全称为「绮录QQ聊天记录导出软件」，品牌及图标继续沿用
 [品牌母版与规则](branding.md)。Python 版本唯一来源仍是 pyproject.toml，npm 对应
-`0.3.1`；不以普通提交次数递增版本，候选修订递增 rc。
+`0.4.0`；不以普通提交次数递增版本，候选修订递增 rc。
+
+## 0.4.0 隐私确认与多线程读取
+
+新增启动隐私确认属于功能变化，因此源码从尚未发行的 0.3.1 进入 0.4.0。
+每次启动均显示本机全文与固定 Pages 链接；同意前不启动内核，主进程同时阻断
+账号、消息、媒体、导出、工具及文件夹选择 IPC。拒绝或 Esc 退出，授权不跨运行保存。
+敏感信息处理需单独确认；网络头像独立选择、默认关闭，通过子进程环境传入明确权限。
+`privacy.md` 是唯一条款源，`tools/build_privacy.py` 生成本机 HTML 与 SHA-256 元数据，
+同一生成器仅向 Pages 上传首页、样式、品牌图、合成运行截图和公开条款文件。
+根项目地址为 https://github.com/qingzhi-star/QL-qq-chat-history-exporter 。
+
+消息库、联系人库、群资料库及媒体索引由有界的四线程池并行准备；所有工作结束后
+再清理失败工作区，保持临时文件生命周期与源只读语义。随机滚动改用 32 条分页，
+最多两个消息请求在途，优先当前可见位置，尚未发送的旧位置请求直接移出队列。
+缓存仍有界，消息外观、勾选、引用、滚轮与账号交互不重新设计。
+
+维护者在隐私条款中的公开联系渠道经用户确认使用 GitHub 维护者 qingzhi-star 及 Issues。
+条款描述真实实现，不将本机处理、启动确认或 MIT 许可当作对全部法律义务的替代。
 
 ## 0.3.1 读取修复与离线边界
 
@@ -81,7 +99,7 @@ python tools/build_electron.py --wheelhouse build/release-wheelhouse
 ```
 
 `--electron-dist` 可指定已经校验官方 SHA256 的 Electron 运行库目录，避免重复下载。
-构建输出位于 `dist/electron-0.3.1`，包括 Inno Setup 安装器、完整目录 ZIP、
+构建输出位于 `dist/electron-0.4.0`，包括 Inno Setup 安装器、完整目录 ZIP、
 win-unpacked 测试目录和指纹清单。Electron 45 的 `electron_wer.dll` 须与主 exe 同名
 （`绮录QQ聊天记录导出软件_wer.dll`），构建时保留该配对。
 

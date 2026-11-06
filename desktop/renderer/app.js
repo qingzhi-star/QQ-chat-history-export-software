@@ -5,6 +5,7 @@ const api = window.qilu;
 let state = null, current = null, selecting = false, allSelected = false;
 let selected = new Set(), excluded = new Set(), dates = null, loading = false, refreshing = false;
 let toastTimer, chatFrame;
+let privacyAccepted=false,privacyPolicy=null;
 const resourceCache = new Map(), resourceQueue = [];
 let resourceActive = 0;
 const formats = new Set(['html']);
@@ -312,12 +313,26 @@ $('close-more').addEventListener('click',()=>$('more-dialog').close());
 
 $('open-output').addEventListener('click',()=>run(()=>api.openOutput()));
 for(const button of document.querySelectorAll('[data-window]'))button.addEventListener('click',()=>api.window(button.dataset.window));
-document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!document.querySelector('dialog[open]'))exitSelection();if(event.ctrlKey&&event.key==='f'){event.preventDefault();$('search').click();}});
+document.addEventListener('keydown',event=>{if(!privacyAccepted)return;if(event.key==='Escape'&&!document.querySelector('dialog[open]'))exitSelection();if(event.ctrlKey&&event.key==='f'){event.preventDefault();$('search').click();}});
 setInterval(()=>run(async()=>{
-  if(loading || refreshing || selecting || document.querySelector('dialog[open]'))return;
+  if(!privacyAccepted || loading || refreshing || selecting || document.querySelector('dialog[open]'))return;
   refreshing=true;
   try {const result=await api.refresh();if(result)applyState(result,{preserve:true});}finally{refreshing=false;}
 }),2000);
 const tools=initTools({api,getState:()=>state,getCurrent:()=>current,applyState,onError:toast,setBusy:busy,
   clearResources:()=>{resourceCache.clear();list.invalidate();},refreshMessages:preferences=>{formats.clear();for(const format of preferences?.formats||state?.formats||['html'])formats.add(format);list.invalidate();},see:index=>list.see(index)});
-run(boot);
+$('privacy-online').addEventListener('click',event=>{event.preventDefault();run(()=>api.privacyOpen());});
+$('privacy-sensitive').addEventListener('change',()=>{$('privacy-accept').disabled=!privacyPolicy||!$('privacy-sensitive').checked;});
+$('privacy-decline').addEventListener('click',()=>{api.privacyDecline().catch(()=>{});});
+$('privacy-dialog').addEventListener('cancel',event=>{event.preventDefault();api.privacyDecline().catch(()=>{});});
+$('privacy-accept').addEventListener('click',()=>run(async()=>{
+  if(!privacyPolicy||!$('privacy-sensitive').checked)return;
+  $('privacy-accept').disabled=true;
+  try{
+    await api.privacyAccept({...privacyPolicy,sensitive:true,avatars:$('privacy-avatars').checked});
+    privacyAccepted=true;$('privacy-dialog').close();await boot();
+  }finally{$('privacy-accept').disabled=!$('privacy-sensitive').checked;}
+}));
+$('privacy-dialog').showModal();
+api.privacyInfo().then(policy=>{privacyPolicy=policy;$('privacy-policy-version').textContent=`条款版本 ${policy.version} · 仅对本次运行授权`;$('privacy-accept').disabled=!$('privacy-sensitive').checked;})
+  .catch(error=>{$('privacy-error').textContent=error.message||String(error);});

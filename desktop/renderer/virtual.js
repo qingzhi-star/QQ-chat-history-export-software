@@ -27,10 +27,12 @@ export class Heights {
 export class MessageList {
   constructor(viewport, space, load, render) {
     Object.assign(this, { viewport, space, load, render });
-    this.nodes = new Map(); this.pages = new Map(); this.pending = new Set();
+    this.nodes = new Map(); this.pages = new Map(); this.pending = new Map();
+    this.queued=new Set();this.failed=new Set();this.active=0;this.pageSize=32;
     this.heights = new Heights(0); this.generation = 0; this.scheduled = false;
     this.follow = true; this.selectionVersion = 0;
     viewport.addEventListener('scroll', () => {
+      this.failed.clear();
       if (!this.restoring) this.follow = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 3;
       this.schedule();
     }, { passive: true });
@@ -48,7 +50,7 @@ export class MessageList {
   }
   reset(count, { bottom = true, anchor = null, preserve = false } = {}) {
     const old = this.heights;
-    this.generation++; this.pages.clear(); this.pending.clear();
+    this.generation++; this.pages.clear(); this.pending.clear();this.queued.clear();this.failed.clear();
     for (const { element } of this.nodes.values()) { this.observer.unobserve(element); element.remove(); }
     this.nodes.clear(); this.heights = new Heights(count);
     if (preserve) for (let i = 0; i < Math.min(old.count, count); i++) this.heights.set(i, old.values[i]);
@@ -73,34 +75,43 @@ export class MessageList {
   }
   invalidate() { this.selectionVersion++; this.schedule(); }
   get(index) {
-    const offset = Math.floor(index / 128) * 128;
-    if (this.pages.has(offset)) return this.pages.get(offset).get(index);
-    if (!this.pending.has(offset)) {
-      this.pending.add(offset); const generation = this.generation;
-      this.load(offset, 128).then(page => {
+    const offset = Math.floor(index / this.pageSize) * this.pageSize;
+    if (this.pages.has(offset)) {const page=this.pages.get(offset);this.pages.delete(offset);this.pages.set(offset,page);return page.get(index);}
+    if (!this.pending.has(offset)&&!this.failed.has(offset))this.queued.add(offset);
+    return null;
+  }
+  pump() {
+    const center=this.heights.locate(this.viewport.scrollTop+this.viewport.clientHeight/2);
+    while(this.active<2&&this.queued.size){
+      const offset=[...this.queued].sort((a,b)=>Math.abs(a+this.pageSize/2-center)-Math.abs(b+this.pageSize/2-center))[0];
+      this.queued.delete(offset);
+      const generation=this.generation,token={generation};
+      this.pending.set(offset,token);this.active++;
+      this.load(offset, this.pageSize).then(page => {
         if (generation !== this.generation) return;
         const anchor = this.anchor();
         const rows = new Map(page.messages.map(message => [message.index, message]));
         this.pages.set(offset, rows);
-        this.pending.delete(offset);
-        for (let i = offset; i < Math.min(offset + 128, this.heights.count); i++) {
+        for (let i = offset; i < Math.min(offset + this.pageSize, this.heights.count); i++) {
           if (!rows.has(i)) this.heights.set(i, 0);
         }
-        while (this.pages.size > 12) this.pages.delete(this.pages.keys().next().value);
+        while (this.pages.size > 48) this.pages.delete(this.pages.keys().next().value);
         this.region(); this.position(); this.restore(anchor); this.schedule();
       }).catch(error => {
-        this.pending.delete(offset);
-        if (generation === this.generation) this.onError?.(error);
+        if (generation === this.generation){this.failed.add(offset);this.onError?.(error);}
+      }).finally(()=>{
+        if(this.pending.get(offset)===token)this.pending.delete(offset);
+        this.active--;this.schedule();
       });
     }
-    return null;
   }
   draw() {
     if (!this.heights.count) return;
     const top = Math.max(0, this.viewport.scrollTop - 450), bottom = this.viewport.scrollTop + this.viewport.clientHeight + 450;
-    let index = this.heights.locate(top), visible = new Set();
+    let index = this.heights.locate(top), visible = new Set(),needed=new Set();
     for (; index < this.heights.count && this.heights.sum(index) < bottom && visible.size < 60; index++) {
       const message = this.get(index);
+      needed.add(Math.floor(index/this.pageSize)*this.pageSize);
       if (!this.heights.values[index]) continue;
       visible.add(index);
       let row = this.nodes.get(index);
@@ -115,6 +126,8 @@ export class MessageList {
       row.element.style.transform = `translateY(${this.heights.sum(index)}px)`;
     }
     for (const [i, row] of this.nodes) if (!visible.has(i)) { this.observer.unobserve(row.element); row.element.remove(); this.nodes.delete(i); }
+    for(const offset of this.queued)if(!needed.has(offset))this.queued.delete(offset);
+    this.pump();
   }
   see(index) { this.follow = false; this.viewport.scrollTop = this.heights.sum(index); this.schedule(); }
 }

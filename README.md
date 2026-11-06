@@ -7,6 +7,7 @@
   <a href="https://github.com/qingzhi-star/QL-qq-chat-history-exporter/releases/latest">下载正式版</a> ·
   <a href="#快速开始">快速开始</a> ·
   <a href="#离线使用">离线使用</a> ·
+  <a href="https://qingzhi-star.github.io/QL-qq-chat-history-exporter/">项目主页</a> ·
   <a href="https://github.com/qingzhi-star/QL-qq-chat-history-exporter/issues">反馈问题</a>
 </p>
 
@@ -18,7 +19,7 @@
 </p>
 
 <!-- version:start -->
-当前源码版本：**0.3.1**。
+当前源码版本：**0.4.0**。
 <!-- version:end -->
 
 **绮录**是一款 Windows 桌面软件，用于读取本机 QQ NT 记录，预览好友和群聊对话，并导出为 **TXT、PDF、HTML**。文字、图片、表情、引用和文件信息可以一起整理保存，也支持批量导出、增量备份和离线归档。
@@ -71,6 +72,8 @@ PDF 使用软件内置的打印引擎，桌面端导出不需要额外安装浏�
 
 ## 快速开始
 
+每次启动先阅读[隐私条款](https://qingzhi-star.github.io/QL-qq-chat-history-exporter/privacy.html)。同意并确认敏感信息处理说明后才开始读取；拒绝则退出。联网头像为独立可选项，默认关闭，不影响聊天导出。
+
 1. **准备账号。** 首次取得数据库口令时，在本机 QQ 登录本人账号；已有有效本机口令时可离线使用。
 2. **选择账号和会话。** 打开绮录，等待识别本机数据，在左上角切换账号，点击左侧会话查看内容。
 3. **选中需要的记录。** 点击底部“导出记录”，逐条勾选、全选或选择日期范围，然后点击“下一步”。
@@ -102,7 +105,7 @@ QQ聊天记录导出/
 
 数据库口令与 QQ 登录密码不同。Windows QQ NT 的加密数据库本身不能代替解密密钥；“这台电脑以前登录过”不等于软件已经取得口令。取得一次有效口令后，绮录用 Windows DPAPI 在当前用户和设备下保护保存。
 
-头像显示可能在后台请求 QQ 公开头像服务；请求失败不阻塞聊天读取。**解密和导出默认不联网补全媒体**，也不会上传记录。离线缺失图片显示 `[图片](本机未缓存)`。
+单独允许联网头像后，软件才会后台请求 QQ 公开头像服务；请求失败不阻塞聊天读取。**解密和导出默认不联网补全媒体**，也不会上传记录。离线缺失图片显示 `[图片](本机未缓存)`。
 
 ## 常见问题
 
@@ -127,6 +130,8 @@ QQ 正在写入时，软件会有界重试；后台刷新遇到快照忙会保�
 “更多功能”可以生成 Windows 任务计划 XML 和计划 JSON，默认禁用，不自动注册任务。核对路径后由用户导入系统任务计划程序；需要本机有效口令。实现与验证范围见[功能说明](docs/P2-feature-status.md)。
 
 ## 数据与隐私
+
+完整条款见 [GitHub Pages 在线版](https://qingzhi-star.github.io/QL-qq-chat-history-exporter/privacy.html) 与 [privacy.md](privacy.md)。软件内附带同版本全文，断网也能阅读。
 
 - 对 QQ 原始数据库和 WAL 只读，在工作副本中解密和解析。
 - 不上传聊天记录、图片或密钥，不提供远程数据服务。

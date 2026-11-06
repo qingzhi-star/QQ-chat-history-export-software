@@ -19,7 +19,7 @@ def release(tmp_path):
     path = tmp_path/"electron-build.json"
     path.write_text(json.dumps(manifest),encoding="utf-8")
     (tmp_path/"SHA256SUMS").write_text("".join(f"{item['sha256']}  {item['name']}\n" for item in assets),encoding="ascii")
-    gui = dict(pass_=True,systemRuntimeRemoved=True,integratedTools=True,errors=[],scroll=dict(frameP95=17.5),sidebar=dict(p95=17.5))
+    gui = dict(pass_=True,systemRuntimeRemoved=True,integratedTools=True,privacyGate=True,privacyDeclined=True,errors=[],scroll=dict(frameP95=17.5),sidebar=dict(p95=17.5))
     gui["pass"] = gui.pop("pass_")
     return dict(version="0.3.0",source_commit="synthetic",build_manifest_sha256=br.sha256(path),
         platform=dict(release="11",machine="AMD64"),checks=dict.fromkeys(gate.CHECKS,True),

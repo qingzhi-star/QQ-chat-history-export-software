@@ -1,7 +1,7 @@
 {
   "name": "qilu-desktop",
   "productName": "绮录QQ聊天记录导出软件",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "绮录 · 本机 QQ 聊天记录导出",
   "author": "qingzhi-star",
   "license": "MIT",
@@ -23,7 +23,7 @@
     "productName": "绮录QQ聊天记录导出软件",
     "asar": true,
     "directories": {
-      "output": "../dist/electron-0.3.1"
+      "output": "../dist/electron-0.4.0"
     },
     "files": [
       "main.cjs",
@@ -31,7 +31,10 @@
       "bridge.cjs",
       "renderer/**",
       "package.json",
-      "pdf.cjs"
+      "pdf.cjs",
+      "privacy.cjs",
+      "privacy-policy.json",
+      {"from":"../privacy.md","to":"privacy.md"}
     ],
     "extraResources": [
       {
@@ -49,6 +52,6 @@
       "signAndEditExecutable": true
     },
     "afterPack": "./after-pack.cjs",
-    "buildVersion": "0.3.1.0"
+    "buildVersion": "0.4.0.0"
   }
 }

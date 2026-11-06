@@ -43,6 +43,7 @@ class DesktopBackend:
         self._refreshing = False
         self._refresh_retry_at, self._refresh_failures = 0, 0
         self.demo = demo
+        self.allow_avatars = os.environ.get("QILU_ALLOW_AVATARS")=="1"
         self.preferences = config.Config.load()
         from qqexport.desktop_tools import DesktopTools
         self.tools = DesktopTools(self)
@@ -282,6 +283,8 @@ class DesktopBackend:
         from PIL import Image
         try:
             if kind in {"avatar","account-avatar","group"}:
+                if not self.allow_avatars:
+                    return None
                 key = kind,value
                 if key not in self.portraits:
                     raw = None if self.demo else (avatars.fetch_group_avatar(value) if kind=="group" else avatars.fetch_avatar(value))
