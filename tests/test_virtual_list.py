@@ -12,6 +12,11 @@ def test_height_index_updates_and_locates():
     assert index.prefix(4) == 3*104+200
     assert index.locate(3*104+150) == 3
     assert index.locate(index.prefix(99999)) == 99999
+    previous = index.prefix(100000)
+    index.resize(100003)
+    assert index.values[3]==200
+    assert index.prefix(100003)==previous+3*104
+    assert index.locate(previous+105)==100001
 
 
 def test_sidebar_scroll_stops_at_content_edges_and_after_resize():
@@ -97,6 +102,10 @@ def test_wheel_moves_away_from_bottom_in_both_modes():
                 anchors.append(view.anchor())
             assert all(after<before for before,after in zip(anchors,anchors[1:])),(selecting,positions,anchors)
             assert not view.at_bottom()
+            before = view.anchor()
+            view.wheel(type("Wheel",(),{"delta":20})())
+            root.update()
+            assert view.anchor()<before
     finally:
         root.destroy()
 

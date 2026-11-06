@@ -62,3 +62,40 @@ def test_copy_only_referenced_and_source_unchanged(tmp_path):
     name = res.rel_by_source[ref.source]
     assert (out / name).read_bytes() == b"ori-data"
     assert (ref.source.stat().st_size, ref.source.stat().st_mtime_ns) == src_before
+
+
+def test_refresh_reuses_unchanged_folders_and_detects_added_deleted_files(tmp_path,monkeypatch):
+    root = tree(tmp_path)
+    first = media.build_index(root)
+    original = media.os.scandir
+    calls = []
+    def scan(path):
+        calls.append(path)
+        return original(path)
+    monkeypatch.setattr(media.os,"scandir",scan)
+    second = media.build_index(root,previous=first)
+    assert second.by_md5==first.by_md5 and calls==[]
+    folder = root/"Pic"/"2024-01"/"Ori"
+    new_file = folder/("c"*32+".jpg")
+    new_file.write_bytes(b"synthetic")
+    # 显式改变目录时间，避免文件系统时间粒度影响增量索引测试。
+    stamp = folder.stat().st_mtime_ns+1000000
+    media.os.utime(folder,ns=(stamp,stamp))
+    third = media.build_index(root,previous=second)
+    assert "c"*32 in third.by_md5 and "c"*32 not in second.by_md5
+    new_file.unlink()
+    stamp += 1000000
+    media.os.utime(folder,ns=(stamp,stamp))
+    assert "c"*32 not in media.build_index(root,previous=third).by_md5
+
+
+def test_filename_lookup_does_not_scan_all_media(tmp_path):
+    from dataclasses import replace
+    index = media.build_index(tree(tmp_path))
+    class NoLinearScan(dict):
+        def values(self):
+            raise AssertionError("all-media scan")
+    index = replace(index,by_md5=NoLinearScan(index.by_md5))
+    assert not media.resolve(index,"image",None,None,MD5A+".jpg").missing
+    assert not media.resolve(index,"image",None,None,MD5A[:24]+".jpg").missing
+    assert media.resolve(index,"image",None,None,"synthetic-missing.jpg").missing

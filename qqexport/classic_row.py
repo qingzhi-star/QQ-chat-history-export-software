@@ -20,7 +20,8 @@ class _Renderer:
     _apply_selection_visuals = App._apply_selection_visuals
     _draw_check = App._draw_check
     _bind_row = App._bind_row
-    _sel_wheel = App._sel_wheel
+    def _sel_wheel(self,event):
+        return self.row.view.wheel(event)
 
     def __init__(self,row):
         self.row,self.text = row,row.normal
@@ -69,6 +70,8 @@ class MessageRow(tk.Frame):
         self._state,self._mode = None,None
         self._measured_height = None
         self._text_width = None
+        self._selection_height = None
+        self._font_density = "normal"
         self.normal = tk.Text(self,wrap="word",state="disabled",height=1,width=1,
             font=("Microsoft YaHei UI",10),padx=6,pady=0,spacing1=1,spacing3=1,
             selectbackground="#2f7cf6",selectforeground="#ffffff",inactiveselectbackground="#b9d5ff",
@@ -83,6 +86,14 @@ class MessageRow(tk.Frame):
         self.loading = tk.PhotoImage(master=self,width=1,height=1)
         self.bind_widgets((self,self.normal,self.selection_frame))
         self.normal.bind("<Configure>",self._text_resized)
+        self.selection_frame.bind("<Configure>",self._selection_resized)
+
+    def _selection_resized(self,event):
+        if event.height!=self._selection_height:
+            self._selection_height = event.height
+            self._measured_height = None
+            self.view._geometry_dirty = True
+            self.view.schedule()
 
     def _text_resized(self,event):
         if event.width!=self._text_width:
@@ -147,7 +158,8 @@ class MessageRow(tk.Frame):
         changed = self.index!=index or self.message is not message
         self.index,self.message = index,message
         if changed:
-            self._clear_text()
+            if self.view.selecting:
+                self._clear_text()
             if not self.view.selecting or message is None:
                 for child in self.selection_frame.winfo_children():
                     child.destroy()
@@ -174,7 +186,9 @@ class MessageRow(tk.Frame):
             self._show_selection(message,width,selected,density)
         else:
             self.normal.pack_configure(pady=(4 if index==0 else 0,0))
-            self.normal.configure(state="normal",font=("Microsoft YaHei UI",9 if density=="compact" else 10))
+            if self._font_density!=density:
+                self.normal.configure(font=("Microsoft YaHei UI",9 if density=="compact" else 10))
+                self._font_density = density
             self._clear_text()
             self.renderer._render_day = None if show_day else str(day)
             if message:

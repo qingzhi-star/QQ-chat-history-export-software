@@ -11,6 +11,7 @@ from qqexport.classic_row import MessageRow, media_key
 
 class HeightIndex:
     def __init__(self, count, default=104):
+        self.default = default
         self.count, self.values = count, array("q", [default]) * count
         self.tree = array("q", [0] + [default * (i & -i) for i in range(1, count+1)])
 
@@ -35,14 +36,24 @@ class HeightIndex:
     def locate(self, pixel):
         if not self.count:
             return 0
-        low, high = 0, self.count
-        while low < high:
-            mid = (low + high + 1) // 2
-            if self.prefix(mid) <= pixel:
-                low = mid
-            else:
-                high = mid - 1
-        return min(low, self.count-1)
+        index,total = 0,0
+        bit = 1 << (self.count.bit_length()-1)
+        while bit:
+            next_index = index+bit
+            if next_index<=self.count and total+self.tree[next_index]<=pixel:
+                index,total = next_index,total+self.tree[next_index]
+            bit >>= 1
+        return min(index,self.count-1)
+
+    def resize(self,count):
+        if count<self.count:
+            self.__init__(count,self.default)
+            return
+        for position in range(self.count+1,count+1):
+            start = position-(position & -position)
+            self.tree.append(self.default+self.prefix(position-1)-self.prefix(start))
+            self.values.append(self.default)
+        self.count = count
 
 
 class VirtualMessages(ttk.Frame):
@@ -55,6 +66,9 @@ class VirtualMessages(ttk.Frame):
         self.image_loader = image_loader
         self.count, self.heights, self.pages = 0, HeightIndex(0), OrderedDict()
         self.pending, self.rows, self.free = set(), {}, []
+        self._stale_pages = set()
+        self._wheel_remainder = 0
+        self._fine_wheel_remainder,self._fine_wheel = 0,False
         self.avatar_photos,self.image_photos = OrderedDict(),OrderedDict()
         self.selecting, self.selected, self.highlight = False, set(), None
         self._draw_pending = False
@@ -71,21 +85,46 @@ class VirtualMessages(ttk.Frame):
         self.count, self.heights = count, HeightIndex(count)
         self.pages.clear()
         self.pending.clear()
+        self._stale_pages.clear()
         for index, (row, item) in list(self.rows.items()):
             self.canvas.delete(item)
             row.place_forget()
             row.index = -1
             self.free.append(row)
         self.rows.clear()
-        self.canvas.configure(scrollregion=(0,0,1,max(1,self.heights.prefix(count))))
+        self.canvas.configure(scrollregion=(0,0,1,max(1,self.heights.prefix(count),self.canvas.winfo_height())))
         self.canvas.yview_moveto(1 if bottom else 0)
         if anchor and count:
             self.see(min(anchor[0], count-1), offset=anchor[1])
         self.schedule()
 
+    def refresh(self,count,*,anchor=None,bottom=False):
+        """实时追加保留测量值和可见控件；旧内容在新页到达前继续显示。"""
+        if not count:
+            self.reset(0)
+            return
+        self.count = count
+        self.heights.resize(count)
+        self.pending.clear()
+        for offset in list(self.pages):
+            if offset>=count:
+                self.pages.pop(offset)
+        self._stale_pages = set(self.pages)
+        self._geometry_dirty = True
+        total = max(1,self.heights.prefix(count),self.canvas.winfo_height())
+        self.canvas.configure(scrollregion=(0,0,max(1,self.canvas.winfo_width()),total))
+        if bottom:
+            self.canvas.yview_moveto(1)
+        elif anchor:
+            self.see(min(count-1,anchor[0]),offset=anchor[1])
+        self.schedule()
+
     def loaded(self, offset, messages):
         self.pending.discard(offset)
-        self.pages[offset] = dict(messages)
+        previous = self.pages.get(offset,{})
+        self.pages[offset] = {index:previous[index] if previous.get(index)==message else message
+                              for index,message in messages}
+        self._stale_pages.discard(offset)
         self.pages.move_to_end(offset)
         while len(self.pages) > self.max_pages:
             self.pages.popitem(last=False)
@@ -93,6 +132,9 @@ class VirtualMessages(ttk.Frame):
 
     def message(self, index):
         offset = index // self.page_size * self.page_size
+        if offset in self._stale_pages and offset not in self.pending:
+            self.pending.add(offset)
+            self.request_page(offset,self.page_size)
         if offset in self.pages:
             self.pages.move_to_end(offset)
             return self.pages[offset].get(index)
@@ -107,7 +149,7 @@ class VirtualMessages(ttk.Frame):
         return index, int(pixel - self.heights.prefix(index))
 
     def at_bottom(self):
-        total = max(1,self.heights.prefix(self.count))
+        total = max(1,self.heights.prefix(self.count),self.canvas.winfo_height())
         return total*(1-self.canvas.yview()[1])<=1
 
     def see(self, index, offset=0, highlight=False):
@@ -115,7 +157,7 @@ class VirtualMessages(ttk.Frame):
             return
         if highlight:
             self.highlight = index
-        total = max(1,self.heights.prefix(self.count))
+        total = max(1,self.heights.prefix(self.count),self.canvas.winfo_height())
         self.canvas.yview_moveto((self.heights.prefix(index)+offset)/total)
         self.schedule()
 
@@ -123,6 +165,7 @@ class VirtualMessages(ttk.Frame):
         self.selecting, self.selected = enabled, selected
         self.canvas.configure(highlightthickness=0 if enabled else 1)
         self.canvas.configure(yscrollincrement=0 if enabled else 24)
+        self._fine_wheel = False
         self.schedule()
 
     def scroll(self, *args):
@@ -137,7 +180,19 @@ class VirtualMessages(ttk.Frame):
                 self.schedule()
 
     def wheel(self, event):
-        self.canvas.yview_scroll(-int(event.delta/120)*3,"units")
+        fine = abs(event.delta)<120
+        if fine!=self._fine_wheel:
+            self.canvas.configure(yscrollincrement=1 if fine else 0 if self.selecting else 24)
+            self._fine_wheel = fine
+        if fine:
+            pixels = -event.delta*72/120+self._fine_wheel_remainder
+            movement = int(pixels)
+            self._fine_wheel_remainder = pixels-movement
+        else:
+            units = -event.delta/120*(1 if self.selecting else 3)+self._wheel_remainder
+            movement = int(units)
+            self._wheel_remainder = units-movement
+        self.canvas.yview_scroll(movement,"units")
         self.schedule()
         return "break"
 
@@ -204,10 +259,9 @@ class VirtualMessages(ttk.Frame):
                 self.canvas.itemconfigure(item,width=width)
         if not dirty:
             return
-        self.update_idletasks()
         for index,(row,item) in self.rows.items():
             self.heights.set(index,row.measure_height())
-        total = self.heights.prefix(self.count)
+        total = max(self.heights.prefix(self.count),self.canvas.winfo_height())
         self.canvas.configure(scrollregion=(0,0,width,total))
         for index,(row,item) in self.rows.items():
             self.canvas.coords(item,0,self.heights.prefix(index))

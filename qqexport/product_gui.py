@@ -35,6 +35,7 @@ class ProductApp(App):
         self._account_opening = False
         self._closed = False
         self._thumbs = OrderedDict()
+        self._sidebar_portraits = OrderedDict()
         self._image_pending = set()
         self._jobs,self.batch_selected = [],set()
         super().__init__(root, **kwargs)
@@ -49,6 +50,8 @@ class ProductApp(App):
 
     def _build(self):
         super()._build()
+        from qqexport.chat_sidebar import ChatSidebar
+        self.sidebar = ChatSidebar(self)
         self.account_button = ttk.Button(self.count_label.master,text="选择/切换账号…",command=self._switch_account)
         self.account_button.pack(anchor="w",pady=(4,0))
         preview_width = self.text.winfo_reqwidth()+self.tsb.winfo_reqwidth()
@@ -84,9 +87,30 @@ class ProductApp(App):
         self.virtual.canvas.configure(bd=0,relief="flat",highlightthickness=1,highlightbackground="#b0b0b0")
 
     def _loaded(self,source,infos,metas,avs):
+        infos = sorted(infos,key=lambda info:(-(metas.get(info.chat_id,("",info.last_ts))[1] or 0),info.chat_id))
+        same = self.source is not None and self.source.account_uin==source.account_uin
+        selected = self.current_chat_id if same else None
+        self._preserve_chat_scroll = True
+        self._sidebar_same_account = same
+        if same:
+            avs = self.avatar_data | avs
         self.virtual.source = source
         super()._loaded(source,infos,metas,avs)
+        self.selected_idx = next((i for i,info in enumerate(self.infos) if info.chat_id==selected),None)
+        self._paint_rows()
         self.gui_avatars.reset(source,infos)
+
+    def _load_chat_rows(self):
+        self.sidebar.reset(self._sidebar_same_account)
+
+    def _wheel(self,event):
+        return self.sidebar.wheel(event)
+
+    def _sync_chat_scroll(self,event=None):
+        if hasattr(self,"sidebar"):
+            self.sidebar.schedule()
+        else:
+            super()._sync_chat_scroll(event)
 
     def _archive_export(self):
         if self.session is not None:
@@ -194,8 +218,27 @@ class ProductApp(App):
 
     def _make_row(self,idx,info):
         super()._make_row(idx,info)
-        for widget in self.row_widgets[-1]["widgets"]:
-            widget.bind("<Control-Button-1>",lambda _,i=idx:self._batch_toggle(i))
+        row = self.row_widgets[-1]
+        row["index"] = idx
+        for widget in row["widgets"]:
+            widget.bind("<Button-1>",lambda _,row=row:self._select_chat(row["index"]))
+            widget.bind("<Enter>",lambda _,row=row:self._hover_row(row["index"],True))
+            widget.bind("<Leave>",lambda _,row=row:self._hover_row(row["index"],False))
+            widget.bind("<Control-Button-1>",lambda _,row=row:self._batch_toggle(row["index"]))
+
+    def _row_avatar(self,info):
+        data = self.avatar_data.get(info.chat_id)
+        key = ("data",data) if data else ("placeholder",info.title)
+        photo = self._sidebar_portraits.get(key)
+        if photo is None:
+            photo = super()._row_avatar(info)
+            self._sidebar_portraits[key] = photo
+            while len(self._sidebar_portraits)>128:
+                self._sidebar_portraits.popitem(last=False)
+        else:
+            self._sidebar_portraits.move_to_end(key)
+            self._row_photos[info.chat_id] = photo
+        return photo
 
     def _batch_toggle(self,idx):
         chat = self.infos[idx].chat_id
@@ -208,11 +251,21 @@ class ProductApp(App):
         return "break"
 
     def _paint_rows(self):
-        super()._paint_rows()
         for i,row in enumerate(self.row_widgets):
+            if row is None:
+                continue
             if self.infos[i].chat_id in self.batch_selected:
+                bg = "#deebfb"
+            elif i==self.selected_idx:
+                bg = "#e6f0ff"
+            elif i==getattr(self,"_hover",None):
+                bg = "#f3f3f3"
+            else:
+                bg = "#ffffff"
+            if row.get("painted_bg")!=bg:
                 for widget in row["widgets"]:
-                    widget.configure(bg="#deebfb")
+                    widget.configure(bg=bg)
+                row["painted_bg"] = bg
 
     def _show_search(self):
         if self.session is not None:
@@ -308,31 +361,31 @@ class ProductApp(App):
         if not refresh:
             self._account_opening = True
             self.account_button.state(["disabled"])
-        self._source_gen += 1
+        if not refresh:
+            self._source_gen += 1
         gen = self._source_gen
-        self.status.configure(text="正在自动获取口令并读取账号…" if auto_key else "正在读取账号…",foreground="#666")
-        anchor = self.virtual.anchor()
-        bottom = self.virtual.at_bottom()
-        current_id = self.current_chat_id if refresh else None
+        if not refresh:
+            self.status.configure(text="正在自动获取口令并读取账号…" if auto_key else "正在读取账号…",foreground="#666")
+        previous_media = self.source.media_index if refresh and self.source else None
         def work():
             key = account_key(account,allow_scan=auto_key)
-            source = ExportSource.open(account,key)
+            stamp = self._account_stamp(account)
+            source = ExportSource.open(account,key,media_index=previous_media) if previous_media is not None else ExportSource.open(account,key)
             try:
                 repo = MessageRepository(source)
                 session = DataSession(source,repo,cleanup=self._defer_cleanup)
-                session.infos = source.chats()
-                session.metas = {}
-                for info in session.infos:
-                    last = repo.page(info.chat_id,limit=1,reverse=True).messages
-                    if last:
-                        from qqexport.export.txt import segment_text
-                        session.metas[info.chat_id] = (" ".join(segment_text(s) for s in last[-1].segments)[:48],last[-1].ts)
+                session.snapshot_stamp = stamp
+                session.infos,session.metas = repo.sidebar()
                 return session
             except BaseException:
                 source.close()
                 raise
         def ready(session):
             if gen != self._source_gen:
+                session.retire()
+                return
+            if refresh and self.export_mode:
+                self._refreshing = False
                 session.retire()
                 return
             self._account_opening = False
@@ -349,14 +402,26 @@ class ProductApp(App):
             self.preferences.last_account = account.uin
             self._save_preferences()
             self._refreshing = False
+            current_id = self.current_chat_id if refresh else None
+            anchor,bottom = self.virtual.anchor(),self.virtual.at_bottom()
+            unchanged = bool(refresh and old and current_id
+                and old.repository.chat_revision(current_id)==session.repository.chat_revision(current_id)
+                and self._profile_stamp()==self._profile_mtime)
+            if refresh:
+                self._source_gen += 1
             self._loaded(session.source,session.infos,session.metas,{})
+            self._wal_mtime = session.snapshot_stamp
             if old:
                 old.retire()
             selected = next((i for i,x in enumerate(self.infos) if x.chat_id == current_id),None)
             if selected is not None:
                 self.selected_idx = selected
                 self._paint_rows()
-                self._start_preview(self.infos[selected],anchor=anchor,bottom=bottom)
+                if unchanged:
+                    self.virtual.pending.clear()
+                    self.virtual.schedule()
+                else:
+                    self._start_preview(self.infos[selected],anchor=anchor,bottom=bottom,refresh=refresh)
             elif not refresh:
                 self.current_chat_id = None
                 self._pending_jump = None
@@ -381,8 +446,9 @@ class ProductApp(App):
         if info.chat_id != self.current_chat_id:
             self._start_preview(info)
 
-    def _start_preview(self, info, *, anchor=None, bottom=True):
-        self._render_gen += 1
+    def _start_preview(self, info, *, anchor=None, bottom=True,refresh=False):
+        if not refresh:
+            self._render_gen += 1
         gen = self._render_gen
         self.current_chat_id = info.chat_id
         self.title_label.configure(text=info.title)
@@ -393,7 +459,10 @@ class ProductApp(App):
         session = self.session
         def ready(count):
             self.preview = []
-            self.virtual.reset(count,anchor=anchor,bottom=bottom)
+            if refresh:
+                self.virtual.refresh(count,anchor=anchor,bottom=bottom)
+            else:
+                self.virtual.reset(count,anchor=anchor,bottom=bottom)
             if getattr(self,"_pending_jump",None) is not None:
                 self.virtual.highlight = self._pending_jump
                 self._pending_jump = None
@@ -538,6 +607,27 @@ class ProductApp(App):
             self._refreshing = True
             self._open_account(self.source.meta["account"],refresh=True)
         self._schedule_watch()
+
+    @staticmethod
+    def _account_stamp(account):
+        values = []
+        for name in ("nt_msg.db","profile_info.db","group_info.db"):
+            for suffix in ("","-wal"):
+                try:
+                    stat = (account.db_dir/(name+suffix)).stat()
+                    values.append((stat.st_mtime_ns,stat.st_size))
+                except OSError:
+                    values.append(None)
+        return tuple(values)
+
+    def _current_mtime(self):
+        account = self.source.meta.get("account") if self.source else None
+        return self._account_stamp(account) if account else 0
+
+    def _schedule_watch(self):
+        if self._watch_id is not None:
+            self.root.after_cancel(self._watch_id)
+        self._watch_id = self.root.after(1000,self._watch_live)
 
     def close(self):
         if self._closed:

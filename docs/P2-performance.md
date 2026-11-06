@@ -60,3 +60,17 @@ python tools/bench_acceptance.py pdf --report build/p2-pdf.json
 远端 T09 提交的 Python 3.12 / 3.13 / 3.14 全通过：
 [Actions 42147204106](https://github.com/qingzhi-star/QQ-chat-history-export-software/actions/runs/42147204106)。
 发布候选版另在最终提交上重新确认 CI 与冻结程序冒烟。
+
+2026-11-06 / 0.2.0rc8：新增左栏专项基准。复现：
+
+```powershell
+python tools/bench_ui_refresh.py --baseline 02d7b4e --report build/rc8-performance.json
+```
+
+合成 100,000 消息分布于 200 会话；真实 Tk 原版行、三张合成头像、25% 图片，调用
+实际滚轮处理函数并运行 Tk 事件循环。左栏 120 次滚动并模拟悬停，刷新 3 次；右侧
+100,000 虚拟消息、普通/多选分别往返 240 次。对照旧代码在独立模块执行，不修改检出。
+本轮后台加载准备 5809.74→343.99ms，左栏 p95 155.06→50.91ms、刷新 p50
+2044.81→64.26ms；左栏活动行 200→12、上限 40，页面缓存上限不变。右侧预览
+p95 29.70→28.18ms、多选 55.03→52.76ms。该基准不含真实 QQ 解密/磁盘冷启动，
+也不是 GPU 帧率；不同轮次主机负载有波动，55FPS/冷图预算及正式版真机门仍待齐备。

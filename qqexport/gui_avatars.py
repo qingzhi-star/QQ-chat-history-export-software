@@ -59,8 +59,12 @@ class GuiAvatars:
         for index,info in enumerate(infos):
             key = ("group" if info.kind=="group" else "user",str(info.account))
             self.sidebar.setdefault(key,[]).append(index)
+            row = self.app.row_widgets[index] if index<len(self.app.row_widgets) else None
+            if row is None:
+                continue
             if self.cache.get(key):
-                self._show_sidebar(key,self.cache[key][0])
+                if self.app.avatar_data.get(info.chat_id)!=self.cache[key][0]:
+                    self._show_sidebar(key,self.cache[key][0])
             self.request(key)
 
     def message_key(self,message):
@@ -110,6 +114,10 @@ class GuiAvatars:
             if index>=len(self.app.infos) or index>=len(self.app.row_widgets):
                 continue
             info = self.app.infos[index]
+            row = self.app.row_widgets[index]
+            if row is None:
+                continue
             self.app.avatar_data[info.chat_id] = data
             photo = self.app._row_avatar(info)
-            self.app.row_widgets[index]["labels"][0].configure(image=photo)
+            row["photo"] = photo
+            row["labels"][0].configure(image=photo)

@@ -50,7 +50,7 @@ class ExportSource:
 
     @classmethod
     def open(cls, account: discover.QQAccount, passphrase: bytes, *,
-             work_dir: Path | None = None) -> "ExportSource":
+             work_dir: Path | None = None,media_index: media.MediaIndex | None = None) -> "ExportSource":
         if work_dir is None:
             from qqexport.temporary import workspace
             tmp = workspace("exports")
@@ -76,7 +76,8 @@ class ExportSource:
                 warnings.append("group_info.db 解密失败，群名/名片回退")
             contacts_obj = contacts.Contacts.load(profile, group,
                                                   account_uin=account.uin)
-            index = media.build_index(account.media_dir)
+            index = (media.build_index(account.media_dir,previous=media_index) if media_index is not None
+                     else media.build_index(account.media_dir))
             return cls(result.plaintext_db, contacts_obj, index, account.uin,
                        warnings=warnings, tmp=tmp,
                        meta={"account": account, "decrypt": result,

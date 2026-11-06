@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import hashlib
 import sqlite3
 import threading
 
@@ -54,6 +55,12 @@ class MessageRepository:
                     f"rowid, ROW_NUMBER() OVER(PARTITION BY {peer} ORDER BY COALESCE({ts},0),COALESCE({mid},0),rowid)-1 "
                     f"FROM {tables._quote(table)} WHERE {peer} IS NOT NULL AND {system}", (kind + ":",))
             self._con.execute("CREATE INDEX temp.cursor_order ON ordering(chat,ts,mid,rid)")
+            self._con.execute("CREATE TEMP TABLE summaries AS SELECT chat,COUNT(*) AS amount,"
+                              "MIN(ts) AS first_ts,MAX(ts) AS last_ts,MAX(ord) AS last_ord "
+                              "FROM ordering GROUP BY chat")
+            self._con.execute("CREATE UNIQUE INDEX temp.summary_chat ON summaries(chat)")
+            self._counts = dict(self._con.execute("SELECT chat,amount FROM summaries"))
+            self._sidebar = None
         except BaseException:
             self._con.close()
             raise
@@ -63,11 +70,69 @@ class MessageRepository:
             self._con.close()
 
     def chats(self):
-        return self.source.chats()
+        return self.sidebar()[0]
+
+    def sidebar(self):
+        """一次汇总会话及末条预览，避免每个联系人重新扫描整张消息表。"""
+        from qqexport.export.session import ChatInfo
+        from qqexport.export.txt import segment_text
+        with self._lock:
+            if self._sidebar is not None:
+                infos,metas = self._sidebar
+                return list(infos),dict(metas)
+            infos,metas = [],{}
+            self._versions = {}
+            for kind,table in self._tables.items():
+                if table is None:
+                    continue
+                cols = self._columns[kind]
+                selected = ",".join("m."+tables._quote(c) for c in cols)
+                rows = self._con.execute(
+                    f"SELECT s.chat,s.amount,s.first_ts,s.last_ts,{selected} FROM summaries s "
+                    "JOIN ordering o ON o.chat=s.chat AND o.ord=s.last_ord "
+                    f"JOIN {tables._quote(table)} m ON m.rowid=o.rid "
+                    "WHERE s.chat>=? AND s.chat<?",(kind+":",kind+";")).fetchall()
+                peer_uins = {}
+                if kind=="c2c" and mm.COL_PEER_UIN in cols:
+                    missing = any(not row[4+cols.index(mm.COL_PEER_UIN)] for row in rows)
+                    if missing:
+                        peer_uins = dict(self._con.execute(
+                            f"SELECT {tables._quote(mm.COL_PEER_ID)},MAX({tables._quote(mm.COL_PEER_UIN)}) "
+                            f"FROM {tables._quote(table)} WHERE {tables._quote(mm.COL_PEER_UIN)} IS NOT NULL "
+                            f"GROUP BY {tables._quote(mm.COL_PEER_ID)}"))
+                for chat,amount,first_ts,last_ts,*values in rows:
+                    peer = chat.split(":",1)[1]
+                    raw = dict(zip(cols,values))
+                    if kind=="group":
+                        account = peer
+                        title = self.source.contacts.group_name(peer) or f"群{peer}"
+                        subtitle = f"群号 {peer}"
+                    else:
+                        account = raw.get(mm.COL_PEER_UIN) or peer_uins.get(peer)
+                        account = self.source.contacts.uin_of(peer,str(account) if account else None) or peer
+                        title = self.source.contacts.display_name(peer,account)
+                        subtitle = None
+                    ctx = replace(self.source.ctx,kind=kind,group_id=peer if kind=="group" else None,
+                                  resolve_uin=self.source.contacts.uin_of)
+                    last = messages.parse_message(raw,ctx)
+                    if not last.is_system:
+                        body = " ".join(segment_text(s) for s in last.segments).replace("\n"," ")
+                        metas[chat] = (body[:48],last.ts)
+                    blob = raw.get(mm.COL_BLOB)
+                    digest = hashlib.sha256(blob if isinstance(blob,bytes) else b"").digest()
+                    self._versions[chat] = (amount,last_ts,last.msg_id,digest,title)
+                    infos.append(ChatInfo(chat,kind,peer,str(account),title,subtitle,amount,first_ts,last_ts))
+            infos.sort(key=lambda info:(-metas.get(info.chat_id,("",info.last_ts))[1],info.chat_id))
+            self._sidebar = infos,metas
+            return list(infos),dict(metas)
+
+    def chat_revision(self,chat_id):
+        if self._sidebar is None:
+            self.sidebar()
+        return self._versions.get(chat_id)
 
     def count(self, chat_id):
-        with self._lock:
-            return self._con.execute("SELECT COUNT(*) FROM ordering WHERE chat=?", (chat_id,)).fetchone()[0]
+        return self._counts.get(chat_id,0)
 
     def _read(self, chat_id, where, params, limit, reverse=False, cursor_order=False):
         if not 1 <= limit <= 1000:

@@ -129,6 +129,7 @@ class App:
         box.pack(fill="both", expand=True, pady=4)
         self.canvas = tk.Canvas(box, bg="#ffffff", highlightthickness=0, width=300)
         sb = ttk.Scrollbar(box, orient="vertical", command=self.canvas.yview)
+        self.chat_scrollbar = sb
         self.canvas.configure(yscrollcommand=sb.set)
         self.canvas.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
@@ -305,14 +306,11 @@ class App:
         self.infos = infos
         self.chat_meta = metas
         self.avatar_data = avs
-        for child in self.inner.winfo_children():
-            child.destroy()
-        self.row_widgets = []
-        for i, info in enumerate(infos):
-            self._make_row(i, info)
+        self._load_chat_rows()
         self.selected_idx = None
         self._hover = None
-        self.canvas.yview_moveto(0)
+        if not getattr(self,"_preserve_chat_scroll",False):
+            self.canvas.yview_moveto(0)
         account = source.meta.get("account")
         who = getattr(account, "uin", "?")
         self.count_label.configure(text=f"已识别 QQ {who} · 共 {len(infos)} 个会话")
@@ -329,6 +327,13 @@ class App:
         self._profile_mtime = self._profile_stamp()
         self._wal_mtime = self._current_mtime()
         self._schedule_watch()
+
+    def _load_chat_rows(self) -> None:
+        for child in self.inner.winfo_children():
+            child.destroy()
+        self.row_widgets = []
+        for i, info in enumerate(self.infos):
+            self._make_row(i, info)
 
     def _profile_stamp(self) -> int:
         best = 0
