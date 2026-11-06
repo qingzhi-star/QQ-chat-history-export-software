@@ -35,7 +35,7 @@ const os = require('node:os');
     const pictureText = await page.locator('.message').filter({has:page.locator('.chat-picture')}).first().innerText();
     assert.ok(!pictureText.includes('图片加载中'));
     await page.locator('#begin-select').click();
-    assert.ok(await page.locator('.emoji').count()>0);
+    await page.locator('.emoji').first().waitFor();
     await page.locator('.message').first().click({position:{x:500,y:20}});
     await page.locator('#selection-count').filter({hasText:'已选择 1 /'}).waitFor();
     await page.locator('#next').click();
