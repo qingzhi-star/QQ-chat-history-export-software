@@ -16,5 +16,10 @@
 隔离身份安装与卸载、原子替换故障及隐私巡检。Windows 10 真机、完整 GUI 交互、
 真实 Edge PDF、性能及源文件只读性的本轮正式版证据须单独记录；缺少时只允许候选版。
 
+P2 已有 Windows 11 合成 GUI/RSS、真实 Edge PDF/取消和源库字节不变证据，详见
+[P2-performance.md](P2-performance.md)。55FPS 与冷缩略图 200ms 尚未达标，目标
+4 核机和 Windows 10 未验证，不能填写 performance/windows10 为 PASS。
+当前准备的 0.2.0rc1 只跑候选门；最终提交构建与冒烟报告保留本机，不创建稳定标签。
+
 Inno 编译器下载来自[官方 6.7.3 发布](https://github.com/jrsoftware/issrc/releases/tag/is-6_7_3)，
 安装包和编译器均校验固定哈希。静默测试遵循[官方命令行参数](https://jrsoftware.org/ishelp/topic_setupcmdline.htm)。

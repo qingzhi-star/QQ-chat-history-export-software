@@ -1,13 +1,14 @@
 # 交接文档 —— QQ 聊天记录导出
 
-**文档版本：** 2.0  
+**文档版本：** 2.1
 **最后更新：** 2026-11-06  
 **当前分支：** `main`  
 **当前预发布：** `v0.1.0-pre.2`  
-**当前源码版本：** `0.1.1rc1`（候选版，尚未发布）。
-**当前基线：** P1+ T01–T10 实现完成；P2 T01–T10 实现/测量完成、T11 收尾；两项性能预算与正式版真机门槛未齐备。
-**验证基线：** 本地普通测试 `622 passed, 10 deselected`；隐私巡检通过；
-中文/空格路径、缺失运行库提示、隔离安装/启动/卸载自动冒烟通过；本轮 CI 尚未验证。
+**当前源码版本：** `0.2.0rc1`（P2 候选版，尚未公开发布）。
+**当前基线：** P1+ T01–T10、P2 T01–T11 实现及文档收尾完成；两项性能预算与正式版真机门槛未齐备。
+**验证基线：** 本地普通测试 `623 passed, 10 deselected`；隐私巡检通过；
+中文/空格路径、缺失运行库提示、隔离安装/启动/卸载自动冒烟已有 P1+ 通过证据；
+P2 冻结候选包按发布清单重新绑定验证。T09 的 Python 3.12/3.13/3.14 远端 CI 已通过。
 
 > 本文档是当前唯一入口。P0/P1 的历史交接、裁定与踩坑记录已归档到
 > [`HANDOFF-p0-p1-archive.md`](HANDOFF-p0-p1-archive.md)，只在追溯历史时阅读。
@@ -51,13 +52,17 @@ Windows 桌面工具：读取**本机已登录 QQ NT 账号**的本地数据库�
 | P1+ T08 | 固定工具链/依赖哈希、版本单一来源、构建脚本与清单 | ✅ |
 | P1+ T09 | 中文/空格绿色版、缺失运行库、隔离身份安装/卸载自动冒烟 | ✅ |
 | P1+ T10 | 发布门、同版本标签/资产、正式版证据检查、版本规则与文档 | ✅ 实现；正式版证据待补 |
+| P2 T01–T09 | 分页/虚拟列表、搜索、队列、增量、加密归档、媒体、类型与设置 | ✅ |
+| P2 T10 | Tk/RSS、搜索/队列/增量、真实 Edge PDF 与取消 | ✅ 测量完成；预算例外见性能记录 |
+| P2 T11 | 功能验收表、迁移、版本、候选构建/发布门 | ✅ 候选工程；正式版另验收 |
 
 ### 2.2 待做
 
 | 任务 | 内容 |
 |---|---|
-| 正式版门槛 | Windows 10 真机、GUI 交互、真实 PDF、性能和只读性同提交证据 |
-| P2 | 搜索、批量/增量导出、归档、媒体缓存、虚拟化列表 |
+| 正式版门槛 | Windows 10 与目标中配机、完整 GUI/媒体实机、最终同提交的六项 PASS 证据 |
+| T12 性能后续 | 目标 4 核机五轮采样，滚动 ≥55FPS、冷缩略图 ≤200ms；大图与索引冷启动 |
+| 可选预览 | Windows 任务 XML 系统导入与实际定时触发 |
 
 P2 逐任务证据见 [P2-progress.md](P2-progress.md)，实现前的数据生命周期与界面决策见
 [P2-architecture.md](P2-architecture.md)。
@@ -70,11 +75,10 @@ P2 逐任务证据见 [P2-progress.md](P2-progress.md)，实现前的数据生�
 ### 2.3 已知限制
 
 - 只能导出 QQ 已缓存到本机的图片/文件；服务器端过期且未缓存的内容无法恢复。
-- 合并转发未在线展开；语音只保留原始信息，不转码/转写。
-- 普通预览仍使用 `Text`；多选使用独立行列表。P2 计划统一为虚拟化列表。
-- PDF 大文件/大量图片的性能尚未做真机基准。
-- 安装包已成功编译；绿色版已在含空格路径实测启动；安装包的完整交互/静默安装
-  冒烟尚未在自动化中完成（P1P-T09）。
+- 合并转发仅展开本机可解析内容；服务器引用标记未展开。语音保留原始音频，不转码/转写。
+- 普通与多选统一为虚拟列表；首屏/控件/消息页有界，超长单条预览明确省略，复制导出完整。
+- Windows 11 两万张合成小图已测，不等于真实大图 PDF/所有 QQ 变体均通过。
+- 滚动 52.24FPS、冷缩略图 284.55ms 未达到目标；见 [P2-performance.md](P2-performance.md)。
 - 实时更新为追加模式；用户离开底部时不会强制跟随。
 - 打包 exe 使用 ASCII 名 `QQExport.exe`，避免 Tcl 在中文路径/中文 exe 名下的
   初始化问题；窗口标题仍是中文。
@@ -101,6 +105,15 @@ P2 逐任务证据见 [P2-progress.md](P2-progress.md)，实现前的数据生�
 ```
 qqexport/
   gui.py                  Tkinter 主界面、预览、多选、导出交互
+  product_gui.py          P2 实际入口、异步租约、工具菜单与账号切换
+  repository.py          只读分页、稳定游标、内存定位索引
+  virtual_list.py        普通/多选共享虚拟行控件池
+  search.py / search_ui.py  内存搜索、限时正则、跳转与结果导出
+  tasks.py               Tk 主线程调度、数据源租约
+  queue_ui.py            批量队列、进度、恢复
+  archive_ui.py / library.py  离线归档与显式明文资料库
+  thumbnail_cache.py / media_ui.py  内容缓存、缺失定位与本机重扫
+  settings_ui.py / scheduled.py  设置、默认禁用计划文件与单次执行
   selection.py            多选纯模型（日期范围、全选、切换）
   cli.py                  version / doctor / key / gui / export
   config.py               配置与应用目录
@@ -174,6 +187,8 @@ python -m pytest -m live -v -s      # 真机，需 QQ 已登录/缓存口令
 python tools/check_privacy.py --audit
 ```
 
+live fixture 缺少缓存口令时可能启用进程内存扫描，须单独明确授权；普通测试不扫描。
+
 ### 5.3 打包
 
 安装包与绿色版（Windows x64 / Python 3.14.6，Inno Setup 6.7.3）：
@@ -211,6 +226,9 @@ python tools/bench_export.py --messages 10000 --formats txt
 
 当前基线：10k TXT 约 1.1s、TXT+HTML 约 1.6s；细节见
 [perf-baseline.md](perf-baseline.md)。
+P2 规模、实际 Tk/RSS 和预算例外见 [P2-performance.md](P2-performance.md)。
+功能逐项状态见 [P2-feature-status.md](P2-feature-status.md)，升级见
+[P2-migration.md](P2-migration.md)，版本与标签规则见 [VERSIONING.md](VERSIONING.md)。
 
 ---
 

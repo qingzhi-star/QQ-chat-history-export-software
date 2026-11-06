@@ -124,7 +124,7 @@ def _seg_html(seg: Segment, emoji: dict[int, str] | None = None,
             src = _e(m.rel_path)
             name = _e(m.filename or Path(m.rel_path).name)
             return (f'<div class="text">📄 {name} ({_size(m.size)}) · '
-                    f'<a download href="{src}">下载</a></div>')
+                    f'<a download="{name}" href="{src}">下载</a></div>')
         return f'<div class="text">{_e(segment_text(seg))}</div>'
     if seg.kind in ("video", "voice"):
         m = seg.media

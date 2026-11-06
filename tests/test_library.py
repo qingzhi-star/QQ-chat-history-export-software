@@ -74,3 +74,15 @@ def test_conflicting_import_rolls_back_all_changes(tmp_path):
     finally:
         reader.close()
         library.close()
+
+
+def test_future_library_schema_is_rejected_without_rewriting(tmp_path):
+    library = Library()
+    path = library.path
+    library.con.execute("PRAGMA user_version=999")
+    library.con.commit()
+    library.close()
+    before = path.read_bytes()
+    with pytest.raises(LibraryError,match="版本"):
+        Library()
+    assert path.read_bytes()==before

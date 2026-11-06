@@ -10,6 +10,14 @@
 
 ## 备注
 
+- **P2 候选版（2026-11-06）**：Windows 11 / Python 3.14.6，普通测试 623 通过、
+  10 live 排除；未访问 QQ 进程内存。十万条/两万张合成图 GUI、五十万条搜索、五十
+  会话队列及真实 Edge PDF/取消见 [P2-performance.md](P2-performance.md)。这些是
+  合成集成证据，不延伸到未经验证的 QQ 版本或 Windows 10。
+- T09 远端 Python 3.12/3.13/3.14 矩阵全通过：
+  [run 42147204106](https://github.com/qingzhi-star/QQ-chat-history-export-software/actions/runs/42147204106)。
+  最终 P2 构建在最后提交重新跑版本/冻结安装冒烟；不要复用历史正式版真机证据。
+
 - 同日另做一次只读 P1 探测（脱敏）：32 张表；`c2c_msg_table` 86 行、
   `group_msg_table` 991 行；`40800` blob 长度 c2c 中位 103 B / 最大 1522 B，
   group 中位 88 B / 最大 3400 B；解密 1.7 MB 耗时 0.14 s；WAL 61 帧。

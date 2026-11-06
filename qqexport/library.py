@@ -28,13 +28,22 @@ class Library:
         self.closed,self.lock = False,threading.RLock()
         try:
             self.con = sqlite3.connect(self.path,check_same_thread=False)
+            if self.con.execute("PRAGMA user_version").fetchone()[0] not in {0,1}:
+                raise LibraryError("资料库版本较新，请使用匹配的软件版本；原文件保留")
             self.con.execute("PRAGMA journal_mode=WAL")
             self.con.execute("CREATE TABLE IF NOT EXISTS accounts(owner TEXT PRIMARY KEY,label TEXT)")
             self.con.execute("CREATE TABLE IF NOT EXISTS chats(owner TEXT,chat TEXT,info TEXT,PRIMARY KEY(owner,chat))")
             self.con.execute("CREATE TABLE IF NOT EXISTS messages(owner TEXT,chat TEXT,ts INTEGER,mid INTEGER,"
                              "body TEXT,digest TEXT,PRIMARY KEY(owner,chat,ts,mid)) WITHOUT ROWID")
+            for table,expected in {"accounts":["owner","label"],"chats":["owner","chat","info"],
+                                   "messages":["owner","chat","ts","mid","body","digest"]}.items():
+                if [row[1] for row in self.con.execute(f"PRAGMA table_info({table})")]!=expected:
+                    raise LibraryError("资料库结构不匹配，请保留原文件后使用其他目录")
+            self.con.execute("PRAGMA user_version=1")
             self.con.commit()
         except BaseException:
+            if hasattr(self,"con"):
+                self.con.close()
             self.lease.close()
             raise
 
