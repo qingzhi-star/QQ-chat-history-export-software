@@ -14,7 +14,6 @@ class _Renderer:
     _tag_config = App._tag_config
     _append_message = App._append_message
     _insert_segments = App._insert_segments
-    _avatar_photo = App._avatar_photo
     _emoji_photo = App._emoji_photo
     _row_text = App._row_text
     _build_selection_rows = App._build_selection_rows
@@ -38,6 +37,11 @@ class _Renderer:
 
     def _image_photo(self,media):
         return self.row.media_photo(media)
+
+    def _avatar_photo(self,data_uri):
+        if not data_uri and self.row.message and getattr(self.row.view,"avatar_uri",None):
+            data_uri = self.row.view.avatar_uri(self.row.message)
+        return App._avatar_photo(self,data_uri)
 
     def _image_click(self,index,media):
         if not self.row.view.selecting and self.row.view.on_open:

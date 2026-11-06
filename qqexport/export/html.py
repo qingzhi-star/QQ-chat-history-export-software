@@ -123,7 +123,8 @@ def _seg_html(seg: Segment, emoji: dict[int, str] | None = None,
         if link_files and m is not None and not m.missing and m.rel_path:
             src = _e(m.rel_path)
             name = _e(m.filename or Path(m.rel_path).name)
-            return (f'<div class="text">📄 {name} ({_size(m.size)}) · '
+            size = f" ({_size(m.size)})" if m.size is not None else ""
+            return (f'<div class="text">[文件] {name}{size} · '
                     f'<a download="{name}" href="{src}">下载</a></div>')
         return f'<div class="text">{_e(segment_text(seg))}</div>'
     if seg.kind in ("video", "voice"):

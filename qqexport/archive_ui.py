@@ -1,7 +1,5 @@
 """归档导出与离线打开；密码只在本次操作内使用。"""
 from __future__ import annotations
-import base64
-import mimetypes
 import os
 from pathlib import Path
 import threading
@@ -13,7 +11,6 @@ from qqexport.errors import UserError
 from qqexport.export.archive import ArchiveReader,create_archive,encrypted
 from qqexport.export.cancel import ExportCancelled
 from qqexport.export.serde import copy_file
-from qqexport.gui import ImageViewer
 
 
 class ArchiveTask(tk.Toplevel):
@@ -159,14 +156,13 @@ def open_attachment(app,media):
         return
     session = app.session
     if media.kind=="image":
-        if media.data_uri:
-            ImageViewer(app.root,data_uri=media.data_uri)
-        elif media.source and media.source.is_file():
-            session = app.session
-            def read(_):
-                mime = mimetypes.guess_type(str(media.source))[0] or "image/jpeg"
-                return "data:"+mime+";base64,"+base64.b64encode(media.source.read_bytes()).decode("ascii")
-            app._submit(session,read,lambda uri:ImageViewer(app.root,data_uri=uri))
+        from qqexport.viewer_images import prepare
+        def ready(path):
+            try:
+                os.startfile(path)
+            except OSError:
+                messagebox.showerror("无法打开图片","请在 Windows 中设置默认图片查看器后重试。",parent=app.root)
+        app._submit(session,lambda _:prepare(media),ready)
         return
     if not media.source or not media.source.is_file():
         messagebox.showinfo("附件不可用","本机没有此附件，请在 QQ 中打开对应聊天后重新检测。",parent=app.root)

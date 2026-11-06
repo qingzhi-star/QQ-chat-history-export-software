@@ -212,3 +212,11 @@ class VirtualMessages(ttk.Frame):
         row.image_ready(key,image)
         self._geometry_dirty = True
         self.schedule()
+
+    def avatar_ready(self,key):
+        for row,_ in self.rows.values():
+            if row.message and self.avatar_key(row.message)==key:
+                row._state,row._selection_key,row._measured_height = None,None,None
+                row.renderer._avatars.clear()
+        self._geometry_dirty = True
+        self.schedule()

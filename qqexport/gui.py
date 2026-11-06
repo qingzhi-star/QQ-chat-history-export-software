@@ -520,16 +520,8 @@ class App:
         data = self.avatar_data.get(info.chat_id)
         if data and _HAS_PIL:
             try:
-                img = Image.open(io.BytesIO(data)).convert("RGB")
-                side = min(img.width, img.height)
-                img = img.crop(((img.width - side) // 2, (img.height - side) // 2,
-                                (img.width + side) // 2, (img.height + side) // 2))
-                img = img.resize((44, 44), Image.LANCZOS)
-                mask = Image.new("L", (44, 44), 0)
-                ImageDraw.Draw(mask).ellipse((0, 0, 43, 43), fill=255)
-                rounded = Image.new("RGBA", (44, 44), (0, 0, 0, 0))
-                rounded.paste(img, (0, 0), mask)
-                photo = ImageTk.PhotoImage(rounded)
+                from qqexport.gui_avatars import rounded
+                photo = ImageTk.PhotoImage(rounded(data,44))
             except Exception:
                 photo = self._placeholder_avatar(info)
         else:
@@ -538,13 +530,9 @@ class App:
         return photo
 
     def _placeholder_avatar(self, info: ChatInfo) -> tk.PhotoImage:
-        colors = ["#5b8ff9", "#61c9a8", "#f6bd16", "#e8684a", "#9270ca", "#6dc8ec"]
-        color = colors[sum(map(ord, info.title)) % len(colors)]
-        img = Image.new("RGB", (44, 44), color)
-        draw = ImageDraw.Draw(img)
-        draw.ellipse((0, 0, 43, 43), fill=color)
-        draw.text((16, 12), (info.title or "?")[:1], fill="#ffffff")
-        return ImageTk.PhotoImage(img)
+        from qqexport.gui_avatars import placeholder
+        with Image.open(io.BytesIO(placeholder(info.title))) as image:
+            return ImageTk.PhotoImage(image)
 
     def _paint_rows(self) -> None:
         for i, row in enumerate(self.row_widgets):
@@ -758,7 +746,7 @@ class App:
                     self.text.insert("end", "[图片]（本机无原图）", "media")
                 continue
             if seg.kind == "file":
-                self.text.insert("end", "[文件]", "media")
+                self.text.insert("end", txt.segment_text(seg), "media")
                 continue
             text = txt.segment_text(seg)
             if text:
@@ -787,16 +775,8 @@ class App:
             return self._avatars[data_uri]
         try:
             raw = base64.b64decode(data_uri.split(",", 1)[1])
-            img = Image.open(io.BytesIO(raw)).convert("RGB")
-            side = min(img.width, img.height)
-            img = img.crop(((img.width - side) // 2, (img.height - side) // 2,
-                            (img.width + side) // 2, (img.height + side) // 2))
-            img = img.resize((34, 34), Image.LANCZOS)
-            mask = Image.new("L", (34, 34), 0)
-            ImageDraw.Draw(mask).ellipse((0, 0, 33, 33), fill=255)
-            rounded = Image.new("RGBA", (34, 34), (0, 0, 0, 0))
-            rounded.paste(img, (0, 0), mask)
-            photo = ImageTk.PhotoImage(rounded)
+            from qqexport.gui_avatars import rounded
+            photo = ImageTk.PhotoImage(rounded(raw,34))
         except Exception:
             return None
         self._avatars[data_uri] = photo

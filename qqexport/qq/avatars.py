@@ -4,25 +4,46 @@ from __future__ import annotations
 import base64
 import hashlib
 import urllib.request
+from collections import OrderedDict
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from qqexport.export.model import Message, Segment
 
 _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) qqexport/0.1"
-_cache: dict[str, bytes | None] = {}
+_cache: OrderedDict[str,bytes | None] = OrderedDict()
+_cache_lock = threading.RLock()
 
 
 def clear_cache() -> None:
-    _cache.clear()
+    with _cache_lock:
+        _cache.clear()
+
+
+def _cached(key):
+    with _cache_lock:
+        if key not in _cache:
+            return False,None
+        _cache.move_to_end(key)
+        return True,_cache[key]
+
+
+def _remember(key,data):
+    with _cache_lock:
+        _cache[key] = data
+        _cache.move_to_end(key)
+        while len(_cache)>256:
+            _cache.popitem(last=False)
 
 
 def fetch_avatar(uin: str | None, timeout: float = 4.0) -> bytes | None:
     if not uin or not str(uin).isdigit():
         return None
     key = str(uin)
-    if key in _cache:
-        return _cache[key]
+    found,data = _cached(key)
+    if found:
+        return data
     url = f"https://q1.qlogo.cn/g?b=qq&nk={key}&s=100"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": _UA})
@@ -32,7 +53,7 @@ def fetch_avatar(uin: str | None, timeout: float = 4.0) -> bytes | None:
             data = None
     except Exception:
         data = None
-    _cache[key] = data
+    _remember(key,data)
     return data
 
 
@@ -40,8 +61,9 @@ def fetch_group_avatar(group_id: str | None, timeout: float = 4.0) -> bytes | No
     if not group_id or not str(group_id).isdigit():
         return None
     key = "g" + str(group_id)
-    if key in _cache:
-        return _cache[key]
+    found,data = _cached(key)
+    if found:
+        return data
     url = f"https://p.qlogo.cn/gh/{group_id}/{group_id}/100"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": _UA})
@@ -51,7 +73,7 @@ def fetch_group_avatar(group_id: str | None, timeout: float = 4.0) -> bytes | No
             data = None
     except Exception:
         data = None
-    _cache[key] = data
+    _remember(key,data)
     return data
 
 

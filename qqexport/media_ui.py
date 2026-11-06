@@ -77,9 +77,13 @@ def show_missing(app):
 
 
 def clear_thumbnails(app):
-    if messagebox.askyesno("清理缩略图","删除本机缩略图缓存？再次浏览时按需生成。",parent=app.root):
+    if messagebox.askyesno("清理图片缓存","删除缩略图和系统查看器的图片副本？正在使用的副本会保留，再次浏览时按需生成。",parent=app.root):
         from qqexport.thumbnail_cache import ThumbnailCache
-        def done(_):
+        from qqexport.viewer_images import clear
+        def work(_,cancel):
+            ThumbnailCache().clear()
+            return clear()
+        def done(retained):
             app._thumbs.clear()
-            app.status.configure(text="缩略图缓存已清理")
-        ArchiveTask(app,"清理缩略图",lambda _,cancel:ThumbnailCache().clear(),done)
+            app.status.configure(text="图片缓存已清理"+("，正在使用的副本已保留" if retained else ""))
+        ArchiveTask(app,"清理图片缓存",work,done)

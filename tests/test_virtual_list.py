@@ -107,6 +107,24 @@ def test_product_paging_selection_dates_and_chat_switch(tmp_path,monkeypatch):
         app._start_preview(info)
         wait(lambda: not app._busy and bool(app.virtual.pages))
         assert app.current_chat_id == "c2c:u_a"
+        import io
+        from PIL import Image
+        from qqexport.gui_avatars import data_uri
+        from qqexport.qq import avatars
+        stream = io.BytesIO()
+        Image.new("RGB",(64,64),"blue").save(stream,format="PNG")
+        portrait = stream.getvalue()
+        monkeypatch.setattr(avatars,"fetch_avatar",lambda *args:portrait)
+        monkeypatch.setattr(avatars,"fetch_group_avatar",lambda *args:portrait)
+        src.meta["synthetic"] = False
+        app.gui_avatars.reset(src,app.infos)
+        app._start_preview(info)
+        wait(lambda:bool(app.avatar_data))
+        wait(lambda:any(data_uri(portrait) in row.renderer._avatars for row,_ in app.virtual.rows.values()))
+        sidebar_photo = app._row_photos[info.chat_id]
+        assert sidebar_photo.tk.call(str(sidebar_photo),"transparency","get",0,0)
+        src.meta["synthetic"] = True
+        app.gui_avatars.online = False
         assert not root.cget("menu")
         assert app.export_btn.cget("text")=="导出…"
         assert app.next_btn.cget("text")=="下一步"

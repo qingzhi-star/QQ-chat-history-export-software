@@ -60,7 +60,8 @@ def segment_text(seg: Segment) -> str:
         return "[图片]"+("（本机无原图）" if seg.media and seg.media.missing else "")
     if seg.kind == "file":
         m = seg.media
-        return "[文件]"+(" "+m.filename if m and m.filename else "")+("（本机缺失）" if m and m.missing else "")
+        name = (m.filename or (m.source.name if m.source else None)) if m else None
+        return "[文件] "+(Path(name).name if name else "未知文件名")+("（本机缺失）" if m and m.missing else "")
     if seg.kind == "video":
         return "[视频]"
     if seg.kind == "voice":

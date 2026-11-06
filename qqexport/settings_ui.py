@@ -35,7 +35,7 @@ class SettingsDialog(tk.Toplevel):
         ttk.Label(body,text="上次账号仅作标记；多个账号始终由你明确选择。\n索引默认仅在内存；搜索窗口可清除索引和关键词历史。",wraplength=520).pack(anchor="w",pady=12)
         controls = ttk.Frame(body)
         controls.pack(fill="x")
-        for label,action in [("搜索/清除历史",app._show_search),("清理缩略图",app._clear_thumbnails),("清空资料库",lambda:app._library_action("clear_library"))]:
+        for label,action in [("搜索/清除历史",app._show_search),("清理图片缓存",app._clear_thumbnails),("清空资料库",lambda:app._library_action("clear_library"))]:
             ttk.Button(controls,text=label,command=action).pack(side="left",padx=3)
         if app._config_failed:
             ttk.Button(body,text="备份并恢复损坏配置…",command=app._recover_settings).pack(pady=6)

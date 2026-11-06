@@ -20,12 +20,15 @@ from qqexport.virtual_list import VirtualMessages
 
 class ProductApp(App):
     def __init__(self, root, **kwargs):
+        self.root = root
         self._config_failed = False
         try:
             self.preferences = config.Config.load()
         except config.ConfigError:
             self.preferences,self._config_failed = config.Config(),True
         self.tasks = TaskRunner(root)
+        from qqexport.gui_avatars import GuiAvatars
+        self.gui_avatars = GuiAvatars(self)
         self.session = None
         self._source_gen = 0
         self._closed = False
@@ -53,6 +56,8 @@ class ProductApp(App):
         self.virtual.configure(width=preview_width,height=preview_height)
         self.virtual.pack_propagate(False)
         self.virtual.pack(fill="both", expand=True)
+        self.virtual.avatar_uri = self.gui_avatars.message_uri
+        self.virtual.avatar_key = self.gui_avatars.message_key
         self.tools_menu = tk.Menu(self.root,tearoff=False)
         self.tools_menu.add_command(label="搜索消息",command=self._show_search)
         self.tools_menu.add_command(label="批量导出…",command=self._show_batch)
@@ -60,7 +65,7 @@ class ProductApp(App):
         self.tools_menu.add_command(label="导出归档…",command=self._archive_export)
         self.tools_menu.add_command(label="打开/校验归档…",command=self._archive_open)
         self.tools_menu.add_command(label="本机缺失媒体…",command=self._missing_media)
-        self.tools_menu.add_command(label="清理缩略图缓存…",command=self._clear_thumbnails)
+        self.tools_menu.add_command(label="清理图片缓存…",command=self._clear_thumbnails)
         self.tools_menu.add_command(label="切换本机账号…",command=self._switch_account)
         self.tools_menu.add_command(label="设置…",command=self._settings)
         self.tools_menu.add_command(label="生成定时导出任务…",command=self._schedule_export)
@@ -77,6 +82,7 @@ class ProductApp(App):
     def _loaded(self,source,infos,metas,avs):
         self.virtual.source = source
         super()._loaded(source,infos,metas,avs)
+        self.gui_avatars.reset(source,infos)
 
     def _archive_export(self):
         if self.session is not None:
@@ -526,15 +532,17 @@ class ProductApp(App):
         if self._watch_id:
             self.root.after_cancel(self._watch_id)
         self.tasks.close()
+        self.gui_avatars.tasks.close()
         if self.session:
             self.session.retire()
         self._finish_close()
 
     def _finish_close(self):
-        if not self.tasks.idle():
+        if not self.tasks.idle() or not self.gui_avatars.tasks.idle():
             self.root.after(25,self._finish_close)
             return
         self.tasks.pool.shutdown(wait=True)
+        self.gui_avatars.tasks.pool.shutdown(wait=True)
         self._thumbs.clear()
         self.virtual.pages.clear()
         self.root.destroy()
