@@ -8,7 +8,7 @@ from PIL import ImageTk
 from qqexport.core import companions,keystore
 from qqexport.qq import contacts,avatars
 from qqexport.gui_avatars import rounded,placeholder
-from qqexport.ui import INK,MUTED,ACCENT
+from qqexport.ui import INK,MUTED,ACCENT,ActionButton
 
 
 @dataclass(frozen=True)
@@ -83,7 +83,7 @@ class AccountPanel:
         self.name.grid(row=0,column=1,sticky="w")
         self.number = tk.Label(self.card,text="点击右侧切换",font=("Microsoft YaHei UI",9),fg=MUTED,bg="#ffffff",anchor="w")
         self.number.grid(row=1,column=1,sticky="w",pady=(3,0))
-        self.button = ttk.Button(self.card,text="⇄",width=3,command=self.toggle)
+        self.button = ActionButton(self.card,text="⇄",width=3,command=self.toggle)
         self.button.grid(row=0,column=2,rowspan=2,padx=(8,0))
         self._set_photo("header",self.avatar,None,"绮录",48)
 

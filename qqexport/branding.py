@@ -19,5 +19,7 @@ def set_app_id():
 def apply_icon(window):
     path = ASSETS/"qilu.png"
     if path.is_file():
-        window._brand_icon = tk.PhotoImage(master=window,file=str(path))
+        from PIL import Image, ImageTk
+        with Image.open(path) as bitmap:
+            window._brand_icon = ImageTk.PhotoImage(bitmap.convert("RGBA"),master=window)
         window.iconphoto(True,window._brand_icon)

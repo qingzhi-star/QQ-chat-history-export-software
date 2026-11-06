@@ -98,3 +98,26 @@ def test_format_dialog_keeps_allowed_formats_and_callback(tmp_path):
         assert selected==[({"txt"},tmp_path)]
     finally:
         root.destroy()
+
+
+def test_rounded_action_button_mouse_keyboard_and_disabled():
+    from qqexport.ui import ActionButton
+    root = create_root()
+    calls = []
+    try:
+        button = ActionButton(root,text="导出记录",primary=True,command=lambda:calls.append(1))
+        button.pack()
+        root.update()
+        assert button._surface.tk.call(str(button._surface),"transparency","get",0,0)
+        button.event_generate("<ButtonPress-1>",x=15,y=15)
+        button.event_generate("<ButtonRelease-1>",x=15,y=15)
+        assert calls==[1]
+        button.state(["disabled"])
+        button.invoke()
+        assert calls==[1] and button.instate(["disabled"])
+        button.state(["!disabled"])
+        button.configure(text="下一步")
+        button.invoke()
+        assert button.cget("text")=="下一步" and calls==[1,1]
+    finally:
+        root.destroy()
