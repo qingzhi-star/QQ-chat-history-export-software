@@ -15,7 +15,7 @@
   会话队列及真实 Edge PDF/取消见 [P2-performance.md](P2-performance.md)。这些是
   合成集成证据，不延伸到未经验证的 QQ 版本或 Windows 10。
 - T09 远端 Python 3.12/3.13/3.14 矩阵全通过：
-  [run 42147204106](https://github.com/qingzhi-star/QQ-chat-history-export-software/actions/runs/42147204106)。
+  [run 42147204106](https://github.com/qingzhi-star/QL-qq-chat-history-exporter/actions/runs/42147204106)。
   最终 P2 构建在最后提交重新跑版本/冻结安装冒烟；不要复用历史正式版真机证据。
 
 - 同日另做一次只读 P1 探测（脱敏）：32 张表；`c2c_msg_table` 86 行、

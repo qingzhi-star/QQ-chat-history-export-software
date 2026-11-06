@@ -81,7 +81,7 @@ python tools/build_electron.py --wheelhouse build/release-wheelhouse
 ```
 
 `--electron-dist` 可指定已经校验官方 SHA256 的 Electron 运行库目录，避免重复下载。
-构建输出位于 `dist/electron-0.3.0`，包括 Inno Setup 安装器、完整目录 ZIP、
+构建输出位于 `dist/electron-0.3.1`，包括 Inno Setup 安装器、完整目录 ZIP、
 win-unpacked 测试目录和指纹清单。Electron 45 的 `electron_wer.dll` 须与主 exe 同名
 （`绮录QQ聊天记录导出软件_wer.dll`），构建时保留该配对。
 

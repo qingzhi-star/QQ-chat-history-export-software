@@ -58,7 +58,7 @@ python tools/bench_acceptance.py pdf --report build/p2-pdf.json
 ```
 
 远端 T09 提交的 Python 3.12 / 3.13 / 3.14 全通过：
-[Actions 42147204106](https://github.com/qingzhi-star/QQ-chat-history-export-software/actions/runs/42147204106)。
+[Actions 42147204106](https://github.com/qingzhi-star/QL-qq-chat-history-exporter/actions/runs/42147204106)。
 发布候选版另在最终提交上重新确认 CI 与冻结程序冒烟。
 
 2026-11-06 / 0.2.0rc8：新增左栏专项基准。复现：
