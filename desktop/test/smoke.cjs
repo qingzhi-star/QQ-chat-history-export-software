@@ -92,6 +92,17 @@ const os = require('node:os');
     await page.locator('#more').click();
     assert.equal(await page.locator('#classic').count(),0);
     assert.ok(await page.locator('[data-tool]').count()>=15);
+    const moreScroll=await page.locator('#more-dialog').evaluate(dialog=>{
+      const heading=dialog.querySelector('.more-heading'),body=dialog.querySelector('.more-scroll');
+      const before=heading.getBoundingClientRect().top;
+      body.scrollTop=body.scrollHeight;
+      return {fixed:before===heading.getBoundingClientRect().top,scrolled:body.scrollTop>0,
+        outer:dialog.scrollTop,bottomClose:dialog.querySelector('.dialog-actions button')!==null};
+    });
+    assert.ok(moreScroll.fixed && moreScroll.scrolled);assert.equal(moreScroll.outer,0);assert.equal(moreScroll.bottomClose,false);
+    await page.locator('#close-more').click();await page.locator('#more-dialog').waitFor({state:'hidden'});
+    await page.locator('#more').click();
+    report.moreFixedHeader=true;
     await page.locator('[data-tool="batch"]').click();
     await page.locator('#tool-title').filter({hasText:'批量导出'}).waitFor();
     assert.equal(await page.locator('.tool-chat-list input').count(),200);
