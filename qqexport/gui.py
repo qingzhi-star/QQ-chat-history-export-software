@@ -134,10 +134,8 @@ class App:
         sb.pack(side="right", fill="y")
         self.inner = tk.Frame(self.canvas, bg="#ffffff")
         self._win = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
-        self.inner.bind("<Configure>", lambda _e: self.canvas.configure(
-            scrollregion=self.canvas.bbox("all")))
-        self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfigure(
-            self._win, width=e.width))
+        self.inner.bind("<Configure>", self._sync_chat_scroll)
+        self.canvas.bind("<Configure>", self._sync_chat_scroll)
         self.count_label = ttk.Label(left, text="正在读取会话…")
         self.count_label.pack(anchor="w")
 
@@ -513,8 +511,22 @@ class App:
         self.row_widgets.append({"frame": row, "widgets": widgets,
                                  "labels": (avatar, title, time_lbl, sub)})
 
-    def _wheel(self, event) -> None:
-        self.canvas.yview_scroll(int(-event.delta / 120), "units")
+    def _sync_chat_scroll(self, _event=None) -> None:
+        width = max(1,self.canvas.winfo_width())
+        viewport = self.canvas.winfo_height()
+        content = self.inner.winfo_reqheight()
+        self.canvas.itemconfigure(self._win,width=width)
+        # Tk 在内容短于视口时仍允许负向滚动；滚动区域至少覆盖视口。
+        self.canvas.configure(scrollregion=(0,0,width,max(content,viewport)))
+        if content<=viewport:
+            self.canvas.yview_moveto(0)
+
+    def _wheel(self, event) -> str:
+        units = int(-event.delta / 120)
+        first,last = self.canvas.yview()
+        if (units<0 and first>0) or (units>0 and last<1):
+            self.canvas.yview_scroll(units, "units")
+        return "break"
 
     def _row_avatar(self, info: ChatInfo) -> tk.PhotoImage | None:
         data = self.avatar_data.get(info.chat_id)

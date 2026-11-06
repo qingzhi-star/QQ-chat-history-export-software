@@ -14,6 +14,63 @@ def test_height_index_updates_and_locates():
     assert index.locate(index.prefix(99999)) == 99999
 
 
+def test_sidebar_scroll_stops_at_content_edges_and_after_resize():
+    from qqexport.gui import App
+
+    class SyntheticApp(App):
+        def _setup_logging(self):
+            pass
+        def _load_chats(self):
+            pass
+
+    root = create_root()
+    app = SyntheticApp(root)
+    root.geometry("1000x700")
+    rows = []
+    try:
+        for _ in range(3):
+            row = tk.Frame(app.inner,height=60)
+            row.pack(fill="x")
+            row.bind("<MouseWheel>",app._wheel)
+            rows.append(row)
+        root.update()
+        top = app.canvas.canvasy(0)
+        for delta in (120,120,-120,-120):
+            rows[0].event_generate("<MouseWheel>",delta=delta)
+            root.update()
+            assert app.canvas.canvasy(0) == top == 0
+        # 滚动条直接调用 yview 也不能把较短的内容推离顶部。
+        app.canvas.yview("scroll",-3,"units")
+        root.update()
+        assert app.canvas.canvasy(0) == 0
+        for _ in range(20):
+            row = tk.Frame(app.inner,height=60)
+            row.pack(fill="x")
+            rows.append(row)
+        root.update()
+        rows[0].event_generate("<MouseWheel>",delta=-120)
+        root.update()
+        assert app.canvas.canvasy(0)>0
+        for _ in range(40):
+            app._wheel(type("Wheel",(),{"delta":-120})())
+        bottom = app.canvas.canvasy(0)
+        assert app.canvas.yview()[1] == 1
+        app._wheel(type("Wheel",(),{"delta":-120})())
+        assert app.canvas.canvasy(0) == bottom
+        for row in rows[3:]:
+            row.destroy()
+        # 切换账号/重新加载会话时，_loaded 同样先回到顶部。
+        app.canvas.yview_moveto(0)
+        root.update()
+        assert app.canvas.canvasy(0) == 0
+        root.geometry("1000x800")
+        root.update()
+        app.canvas.yview("scroll",-3,"units")
+        assert app.canvas.canvasy(0) == 0
+    finally:
+        root.destroy()
+
+
 def test_wheel_moves_away_from_bottom_in_both_modes():
     root = create_root()
     root.geometry("800x600")
