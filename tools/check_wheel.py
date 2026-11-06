@@ -27,6 +27,8 @@ REQUIRED = (
     "qqexport/doctor.py",
     "qqexport/report.py",
     "qqexport/product_gui.py",
+    "qqexport/canvas_row.py",
+    "qqexport/electron_backend.py",
     "qqexport/repository.py",
     "qqexport/virtual_list.py",
     "qqexport/classic_row.py",

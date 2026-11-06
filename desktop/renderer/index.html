@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>绮录QQ聊天记录导出软件</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="titlebar"><div class="brand"><img src="brand/qilu.png" alt="绮录"><span>绮录QQ聊天记录导出软件</span></div><div class="window-actions"><button data-window="minimize" aria-label="最小化">−</button><button data-window="maximize" aria-label="最大化">□</button><button data-window="close" aria-label="关闭">×</button></div></header>
+  <main>
+    <aside>
+      <section class="account-card"><div id="account-avatar" class="avatar account-avatar"></div><div class="account-name"><strong id="account-name">选择账号</strong><span id="account-uin">正在识别本机账号…</span></div><button id="switch-account" class="icon-button" title="切换账号" aria-label="切换账号">⇄</button></section>
+      <div id="accounts" class="account-menu" hidden></div>
+      <div class="sidebar-heading"><h2>会话</h2><button id="reload" class="text-button" title="重新检测">↻</button></div>
+      <div id="chats" class="chat-list" tabindex="0" aria-label="会话列表"></div>
+    </aside>
+    <section class="conversation">
+      <div class="conversation-heading"><h1 id="chat-title">把对话，收进绮录</h1><div><button id="search" class="icon-button" title="搜索消息" aria-label="搜索消息">⌕</button><button id="more" class="icon-button" title="更多功能" aria-label="更多功能">···</button></div></div>
+      <div id="messages" class="message-list" tabindex="0" aria-label="聊天记录"><div id="message-space"></div></div>
+      <div id="welcome" class="welcome"><img src="brand/qilu.png" alt=""><h2>每一段对话，都值得收好</h2><p>从左边选择一个会话，开始浏览或导出记录。</p></div>
+      <footer><div id="normal-actions"><button id="begin-select" class="primary" disabled>导出记录</button></div><div id="selection-actions" hidden><button id="select-all">全选</button><button id="dates">时间选择</button><span id="selection-count"></span><div class="spacer"></div><button id="cancel-select">取消</button><button id="next" class="primary">下一步</button></div><span id="status" role="status">正在打开本机资料…</span></footer>
+    </section>
+  </main>
+  <div id="toast" role="alert" hidden></div>
+  <dialog id="export-dialog">
+    <form method="dialog"><button class="dialog-close" aria-label="关闭">×</button></form>
+    <h2>把这段对话，收进绮录</h2><p id="export-summary" class="muted"></p>
+    <h3>导出格式 · 可多选</h3>
+    <label class="format-card"><input type="checkbox" value="txt"><span class="custom-check"></span><span><strong>TXT · 纯文本</strong><small>轻量保存，方便搜索和复制</small></span></label>
+    <label class="format-card"><input type="checkbox" value="pdf"><span class="custom-check"></span><span><strong>PDF · 文档</strong><small>保留图片，适合阅读和打印</small></span></label>
+    <label class="format-card"><input type="checkbox" value="html" checked><span class="custom-check"></span><span><strong>HTML · 网页</strong><small>保留图片与附件链接，浏览器直接打开</small></span></label>
+    <h3>保存位置</h3><div class="folder-row"><output id="output-folder">请选择保存文件夹</output><button id="choose-folder">选择文件夹</button></div>
+    <div class="dialog-actions"><button id="cancel-export">取消</button><button id="do-export" class="primary">开始导出</button></div>
+    <p id="export-progress" role="status"></p>
+  </dialog>
+  <dialog id="date-dialog"><h2>选择这段时光</h2><p class="muted">选择日期范围内的聊天记录</p><div class="date-fields"><label>开始日期<input id="date-start" type="date"></label><span>—</span><label>结束日期<input id="date-end" type="date"></label></div><div class="dialog-actions"><button id="cancel-dates">取消</button><button id="apply-dates" class="primary">应用范围</button></div></dialog>
+  <dialog id="search-dialog"><h2>搜索聊天记录</h2><div class="search-form"><input id="search-query" placeholder="在当前会话中搜索…" maxlength="300"><button id="run-search" class="primary">搜索</button></div><div id="search-results"></div><div class="dialog-actions"><button id="close-search">关闭</button></div></dialog>
+  <dialog id="more-dialog"><h2>更多功能</h2><p class="muted">搜索、批量导出、增量备份、归档与资料库等完整工具继续可用。</p><button id="classic" class="wide">打开经典工具窗口</button><button id="open-output" class="wide">打开本次导出文件夹</button><div class="dialog-actions"><span id="version" class="muted"></span><button id="close-more">关闭</button></div></dialog>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

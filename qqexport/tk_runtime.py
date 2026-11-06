@@ -4,6 +4,33 @@ import time
 import tkinter as tk
 
 
+def prepare_frozen():
+    """兼容工具窗口沿用发行包的 Tcl 数据准备，不影响 Electron 渲染进程。"""
+    import os
+    import sys
+    import tempfile
+    import shutil
+    from pathlib import Path
+    if not getattr(sys,"frozen",False):
+        return
+    base = Path(getattr(sys,"_MEIPASS",Path(sys.executable).parent))
+    cache = Path(tempfile.gettempdir())/"QQExportRuntime"
+    for name,variable in (("_tcl_data","TCL_LIBRARY"),("_tk_data","TK_LIBRARY")):
+        source,target = base/name,cache/name
+        if not source.is_dir():
+            continue
+        if not target.exists():
+            try:
+                shutil.copytree(source,target)
+            except OSError:
+                continue
+        import ctypes
+        buffer = ctypes.create_unicode_buffer(32768)
+        if ctypes.windll.kernel32.GetShortPathNameW(str(target),buffer,len(buffer)):
+            target = Path(buffer.value)
+        os.environ[variable] = str(target)
+
+
 def create_root():
     from qqexport.branding import set_app_id
     set_app_id()

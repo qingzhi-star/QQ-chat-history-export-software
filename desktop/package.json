@@ -1,0 +1,53 @@
+{
+  "name": "qilu-desktop",
+  "productName": "绮录QQ聊天记录导出软件",
+  "version": "0.3.0-rc.1",
+  "description": "绮录 · 本机 QQ 聊天记录导出",
+  "author": "qingzhi-star",
+  "license": "MIT",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.cjs",
+    "test:ui": "node test/smoke.cjs",
+    "dist": "node build.cjs"
+  },
+  "devDependencies": {
+    "electron": "45.2.3",
+    "electron-builder": "26.18.0",
+    "playwright": "1.65.0"
+  },
+  "build": {
+    "appId": "qingzhi-star.Qilu",
+    "productName": "绮录QQ聊天记录导出软件",
+    "asar": true,
+    "directories": {
+      "output": "../dist/electron-0.3.0rc1"
+    },
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "bridge.cjs",
+      "renderer/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../build/electron-core/qilu-core",
+        "to": "core"
+      },
+      {
+        "from": "../qqexport/assets",
+        "to": "brand"
+      }
+    ],
+    "win": {
+      "icon": "../qqexport/assets/qilu.ico",
+      "artifactName": "Qilu-${version}-${arch}.${ext}",
+      "signAndEditExecutable": true
+    },
+    "afterPack": "./after-pack.cjs",
+    "buildVersion": "0.3.0.1"
+  }
+}
