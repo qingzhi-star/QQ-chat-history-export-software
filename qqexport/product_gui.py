@@ -47,6 +47,8 @@ class ProductApp(App):
 
     def _build(self):
         super()._build()
+        self.account_button = ttk.Button(self.count_label.master,text="选择/切换账号…",command=self._switch_account)
+        self.account_button.pack(anchor="w",pady=(4,0))
         preview_width = self.text.winfo_reqwidth()+self.tsb.winfo_reqwidth()
         preview_height = self.text.winfo_reqheight()
         self.text.pack_forget()
@@ -320,6 +322,8 @@ class ProductApp(App):
             old = self.session
             if not refresh:
                 self.batch_selected.clear()
+                self.selected_msgs.clear()
+                self._exit_export_mode()
             self.session = session
             self._thumbs.clear()
             self.uin = account.uin
@@ -336,7 +340,11 @@ class ProductApp(App):
                 self._start_preview(self.infos[selected],anchor=anchor,bottom=bottom)
             elif not refresh:
                 self.current_chat_id = None
+                self._pending_jump = None
+                self.virtual.highlight = None
                 self.virtual.reset(0)
+                self.title_label.configure(text="选择左侧会话查看内容")
+                self.export_btn.state(["disabled"])
                 self.status.configure(text="选择会话；双击打开本机附件，右键复制消息")
         self.tasks.submit(work,ready,self._error)
 

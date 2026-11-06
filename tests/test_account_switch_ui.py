@@ -1,0 +1,89 @@
+"""合成本机账号选择和切换，不读取真实 QQ 或密钥。"""
+import time
+import tkinter as tk
+from tkinter import ttk
+
+from qqexport.core import discover,keystore
+from qqexport.export.session import ExportSource
+from qqexport.product_gui import ProductApp
+from qqexport.tk_runtime import create_root
+from tests.test_repository import source
+
+
+def test_bottom_left_button_selects_switches_and_cancels(tmp_path,monkeypatch):
+    monkeypatch.setenv("QQEXPORT_HOME",str(tmp_path/"home"))
+    accounts = [discover.QQAccount(uin,tmp_path/uin,tmp_path/uin/"nt_db",tmp_path/uin/"nt_data")
+                for uin in ("12345","11111111")]
+    for account in accounts:
+        account.data_dir.mkdir()
+    monkeypatch.setattr(discover,"discover_accounts",lambda **kwargs:accounts)
+    monkeypatch.setattr(keystore.KeyStore,"load",lambda self,uin:"synthetic")
+    def open_source(account,key):
+        src = source(account.data_dir,count=3 if account==accounts[0] else 5)
+        src.account_uin = account.uin
+        src.meta["account"] = account
+        return src
+    monkeypatch.setattr(ExportSource,"open",staticmethod(open_source))
+
+    class SyntheticApp(ProductApp):
+        def _setup_logging(self):
+            pass
+        def _load_chats(self):
+            pass
+
+    root = create_root()
+    app = SyntheticApp(root)
+    def wait(predicate):
+        end = time.monotonic()+5
+        while time.monotonic()<end:
+            root.update()
+            if predicate():
+                return
+            time.sleep(.01)
+        assert predicate()
+    def chooser():
+        dialogs = [child for child in root.winfo_children() if isinstance(child,tk.Toplevel)]
+        return dialogs[0] if dialogs else None
+    def choose(index):
+        app.account_button.invoke()
+        wait(lambda:chooser() is not None)
+        dialog = chooser()
+        combo = next(child for child in dialog.winfo_children() if isinstance(child,ttk.Combobox))
+        accept = next(child for child in dialog.winfo_children() if isinstance(child,ttk.Button))
+        assert combo.current()==-1
+        accept.invoke()
+        assert dialog.winfo_exists()
+        combo.current(index)
+        accept.invoke()
+        wait(lambda:app.uin==accounts[index].uin and app.session is not None)
+    try:
+        root.update()
+        assert app.account_button.winfo_rootx()<app.export_btn.winfo_rootx()
+        assert app.account_button.winfo_rooty()>app.count_label.winfo_rooty()
+        choose(0)
+        app._select_chat(0)
+        wait(lambda:app.virtual.count==3 and not app._busy)
+        app._open_export()
+        app._toggle_check(0)
+        app.batch_selected.add(app.current_chat_id)
+        old_session = app.session
+        choose(1)
+        assert old_session.retired
+        assert not app.export_mode and not app.selected_msgs and not app.batch_selected
+        assert app.current_chat_id is None and app.virtual.count==0
+        assert app.title_label.cget("text")=="选择左侧会话查看内容"
+        assert "disabled" in app.export_btn.state()
+        app._select_chat(0)
+        wait(lambda:app.virtual.count==5 and not app._busy)
+        current = app.session
+        app.account_button.invoke()
+        wait(lambda:chooser() is not None)
+        chooser().destroy()
+        assert app.session is current and app.uin==accounts[1].uin
+        assert app.preferences.last_account==accounts[1].uin
+        monkeypatch.setattr(discover,"discover_accounts",lambda **kwargs:[])
+        app.account_button.invoke()
+        wait(lambda:app.status.cget("text")=="未找到本机账号")
+        assert app.session is current
+    finally:
+        app.close()
