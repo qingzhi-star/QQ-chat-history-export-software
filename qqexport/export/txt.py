@@ -78,10 +78,11 @@ def segment_text(seg: Segment) -> str:
     if seg.kind == "markdown":
         return clean_markdown(seg.text)
     if seg.kind == "reply":
-        if seg.quoted is not None and seg.quoted.segments:
+        if seg.quoted is not None:
             quote = " ".join(segment_text(s) for s in seg.quoted.segments).strip()
+            quote = quote or "引用正文未保存在本机"
             return f"[回复 {seg.quoted.sender_name}：{quote}] {seg.text or ''}".rstrip()
-        return f"[回复] {seg.text or ''}".rstrip()
+        return f"[回复] {seg.text}" if seg.text else "[回复] 引用正文未保存在本机"
     if seg.kind == "forward_nt":
         if seg.forward_previews:
             return "[本地合并转发]\n"+"\n".join(f"{name}：{text}" for name,text in seg.forward_previews)

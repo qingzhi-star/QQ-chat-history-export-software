@@ -55,6 +55,7 @@ class VirtualMessages(ttk.Frame):
         self.image_loader = image_loader
         self.count, self.heights, self.pages = 0, HeightIndex(0), OrderedDict()
         self.pending, self.rows, self.free = set(), {}, []
+        self.avatar_photos,self.image_photos = OrderedDict(),OrderedDict()
         self.selecting, self.selected, self.highlight = False, set(), None
         self._draw_pending = False
         self._drawing, self._needs_redraw, self._last_scroll = False, False, None
@@ -106,7 +107,8 @@ class VirtualMessages(ttk.Frame):
         return index, int(pixel - self.heights.prefix(index))
 
     def at_bottom(self):
-        return self.canvas.yview()[1] >= 0.995
+        total = max(1,self.heights.prefix(self.count))
+        return total*(1-self.canvas.yview()[1])<=1
 
     def see(self, index, offset=0, highlight=False):
         if not self.count:
@@ -140,6 +142,9 @@ class VirtualMessages(ttk.Frame):
         return "break"
 
     def schedule(self):
+        if self._drawing:
+            self._needs_redraw = True
+            return
         if not self._draw_pending and not self._drawing:
             self._draw_pending = True
             self.after_idle(self.draw)
@@ -154,6 +159,19 @@ class VirtualMessages(ttk.Frame):
             self._drawing = False
         if self._needs_redraw:
             self.schedule()
+
+    def _take_row(self,message):
+        if self.selecting and message is not None:
+            layout = tuple(segment.kind for segment in message.segments)
+            for position in range(len(self.free)-1,-1,-1):
+                candidate = self.free[position]
+                if (candidate.renderer.sel_rows and candidate.message is not None
+                        and tuple(segment.kind for segment in candidate.message.segments)==layout):
+                    return self.free.pop(position)
+            # 为不同内容结构保留少量原版控件模板，避免图文交替时反复销毁重建。
+            if len(self.rows)+len(self.free)<60:
+                return MessageRow(self.canvas,self)
+        return self.free.pop() if self.free else MessageRow(self.canvas,self)
 
     def _render(self):
         if not self.count or not self.winfo_exists():
@@ -174,13 +192,14 @@ class VirtualMessages(ttk.Frame):
                 self.free.append(row)
                 dirty = True
         for index in sorted(wanted):
+            message = self.message(index)
             if index not in self.rows:
-                row = self.free.pop() if self.free else MessageRow(self.canvas,self)
+                row = self._take_row(message)
                 item = self.canvas.create_window(0,self.heights.prefix(index),window=row,anchor="nw",width=width)
                 self.rows[index] = (row,item)
                 dirty = True
             row,item = self.rows[index]
-            if row.show(index,self.message(index),width):
+            if row.show(index,message,width):
                 dirty = True
                 self.canvas.itemconfigure(item,width=width)
         if not dirty:
@@ -195,6 +214,7 @@ class VirtualMessages(ttk.Frame):
         if bottom:
             self.canvas.yview_moveto(1)
         else:
+            offset = min(offset,max(0,self.heights.values[anchor]-1))
             self.canvas.yview_moveto((self.heights.prefix(anchor)+offset)/max(1,total))
         next_first = max(0,self.anchor()[0]-3)
         next_last = min(self.count,self.heights.locate(self.canvas.canvasy(self.canvas.winfo_height()))+5,next_first+60)

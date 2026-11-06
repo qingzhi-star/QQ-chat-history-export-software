@@ -14,6 +14,36 @@ def test_height_index_updates_and_locates():
     assert index.locate(index.prefix(99999)) == 99999
 
 
+def test_wheel_moves_away_from_bottom_in_both_modes():
+    root = create_root()
+    root.geometry("800x600")
+    view = None
+    def request(offset,size):
+        view.loaded(offset,[(i,Message(i,100+i,None,None,"合成",False,[Segment("text",f"synthetic {i}")]))
+                            for i in range(offset,min(offset+size,100000))])
+    view = VirtualMessages(root,request,lambda index:None)
+    view.pack(fill="both",expand=True)
+    try:
+        for selecting in (False,True):
+            view.selection(selecting,set())
+            view.reset(100000,bottom=True)
+            root.update()
+            assert view.at_bottom()
+            positions = [view.canvas.canvasy(0)]
+            anchors = [view.anchor()]
+            for _ in range(4):
+                row = next(iter(view.rows.values()))[0]
+                widget = row.renderer.sel_rows[0]["bg"][4] if selecting else row.normal
+                widget.event_generate("<MouseWheel>",delta=120)
+                root.update()
+                positions.append(view.canvas.canvasy(0))
+                anchors.append(view.anchor())
+            assert all(after<before for before,after in zip(anchors,anchors[1:])),(selecting,positions,anchors)
+            assert not view.at_bottom()
+    finally:
+        root.destroy()
+
+
 def test_virtual_widget_pool_and_scroll_stay_bounded():
     root = create_root()
     root.geometry("800x600")
@@ -38,6 +68,60 @@ def test_virtual_widget_pool_and_scroll_stay_bounded():
     root.update()
     assert abs(view.anchor()[0]-anchor[0]) <= 1
     root.destroy()
+
+
+def test_reply_fallback_and_recycled_selection_widgets():
+    from pathlib import Path
+    from qqexport.classic_row import MessageRow
+    from qqexport.export.model import MediaRef
+    from qqexport.gui import App
+    root = create_root()
+    root.geometry("800x600")
+    view = VirtualMessages(root,lambda offset,size:None,lambda index:None)
+    view.pack(fill="both",expand=True)
+    first = Message(1,100,None,None,"合成一",False,[Segment("reply")])
+    second = Message(2,200,None,None,"合成二",False,[Segment("text","合成正文")])
+    try:
+        row = MessageRow(view.canvas,view)
+        row.pack(fill="x")
+        row.show(0,first,800)
+        root.update()
+        assert "引用正文未保存在本机" in row.normal.get("1.0","end")
+        view.selecting = True
+        row.show(0,first,800)
+        widgets = tuple(row.renderer.sel_rows[0]["bg"])
+        assert "引用正文未保存在本机" in widgets[5].cget("text")
+        view.selected = {1}
+        row.show(1,second,800)
+        root.update()
+        assert tuple(row.renderer.sel_rows[0]["bg"]) == widgets
+        assert widgets[4].cget("text").startswith("合成二")
+        assert widgets[5].cget("text") == "合成正文"
+        assert widgets[0].cget("bg") == "#e6f0ff"
+        for index,color in enumerate(("blue","green")):
+            key = f"synthetic-{index}.png"
+            photo = tk.PhotoImage(master=root,width=10,height=10)
+            photo.put(color,to=(0,0,10,10))
+            view.image_photos[key] = photo
+            message = Message(index+5,300,None,None,"合成图片",False,[Segment("image",
+                media=MediaRef("image",source=Path(key),missing=False))])
+            row.show(index+2,message,800)
+            current = tuple(row.renderer.sel_rows[0]["bg"])
+            if index:
+                assert current == image_widgets
+                assert current[-1].cget("image") != first_photo
+            else:
+                image_widgets,first_photo = current,current[-1].cget("image")
+            assert str(photo) == current[-1].cget("image")
+            assert row.renderer._sel_photos == [photo]
+        view.selected = {3}
+        row.show(3,message,800)
+        assert current[0].cget("bg") == "#e6f0ff"
+        quoted = Message(3,100,None,None,"合成引用者",False,[Segment("text","合成引用")])
+        reply = Message(4,200,None,None,"合成",False,[Segment("reply",text="合成回复",quoted=quoted)])
+        assert App._row_text(None,reply).count("合成引用者") == 1
+    finally:
+        root.destroy()
 
 
 def test_source_retirement_waits_for_last_lease():

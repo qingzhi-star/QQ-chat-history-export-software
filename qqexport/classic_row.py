@@ -41,7 +41,17 @@ class _Renderer:
     def _avatar_photo(self,data_uri):
         if not data_uri and self.row.message and getattr(self.row.view,"avatar_uri",None):
             data_uri = self.row.view.avatar_uri(self.row.message)
-        return App._avatar_photo(self,data_uri)
+        cache = self.row.view.avatar_photos
+        if data_uri in cache:
+            cache.move_to_end(data_uri)
+            self._avatars[data_uri] = cache[data_uri]
+            return cache[data_uri]
+        photo = App._avatar_photo(self,data_uri)
+        if photo is not None:
+            cache[data_uri] = photo
+            while len(cache)>128:
+                cache.popitem(last=False)
+        return photo
 
     def _image_click(self,index,media):
         if not self.row.view.selecting and self.row.view.on_open:
@@ -58,6 +68,7 @@ class MessageRow(tk.Frame):
         self.photos,self.requested = {},set()
         self._state,self._mode = None,None
         self._measured_height = None
+        self._text_width = None
         self.normal = tk.Text(self,wrap="word",state="disabled",height=1,width=1,
             font=("Microsoft YaHei UI",10),padx=6,pady=0,spacing1=1,spacing3=1,
             selectbackground="#2f7cf6",selectforeground="#ffffff",inactiveselectbackground="#b9d5ff",
@@ -68,8 +79,17 @@ class MessageRow(tk.Frame):
         self.selection_frame = tk.Frame(self,bg="#ffffff")
         self.renderer = _Renderer(self)
         self._selection_key = None
+        self._selection_shape = None
         self.loading = tk.PhotoImage(master=self,width=1,height=1)
         self.bind_widgets((self,self.normal,self.selection_frame))
+        self.normal.bind("<Configure>",self._text_resized)
+
+    def _text_resized(self,event):
+        if event.width!=self._text_width:
+            self._text_width = event.width
+            self._measured_height = None
+            self.view._geometry_dirty = True
+            self.view.schedule()
 
     def bind_widgets(self,widgets):
         for widget in widgets:
@@ -101,6 +121,11 @@ class MessageRow(tk.Frame):
         key = media_key(media)
         if key in self.photos:
             return self.photos[key]
+        cache = self.view.image_photos
+        if key in cache:
+            cache.move_to_end(key)
+            self.photos[key] = self.photo = cache[key]
+            return cache[key]
         if key and self.view.image_loader:
             if key not in self.requested:
                 self.requested.add(key)
@@ -123,9 +148,11 @@ class MessageRow(tk.Frame):
         self.index,self.message = index,message
         if changed:
             self._clear_text()
-            for child in self.selection_frame.winfo_children():
-                child.destroy()
-            self.renderer.sel_rows = []
+            if not self.view.selecting or message is None:
+                for child in self.selection_frame.winfo_children():
+                    child.destroy()
+                self.renderer.sel_rows = []
+                self._selection_shape = None
             self.renderer._sel_photos = []
             self._selection_key = None
             self.photo = None
@@ -162,14 +189,39 @@ class MessageRow(tk.Frame):
         return True
 
     def _show_selection(self,message,width,selected,density):
+        selection_changed = bool(self.renderer.selected_msgs)!=selected
         self.renderer.selected_msgs = {0} if selected else set()
-        # 多选控件也由旧 gui.py 原函数创建；这里只映射可视行的局部索引。
         key = (id(message),tuple(self.photos))
         if self._selection_key!=key:
             self.renderer.preview = [message] if message else []
-            self.renderer._build_selection_rows()
+            text = self.renderer._row_text(message) if message else ""
+            photos = []
+            for segment in message.segments if message else ():
+                if segment.kind=="image":
+                    photo = self.media_photo(segment.media)
+                    if photo is not None:
+                        photos.append(photo)
+            shape = (bool(text),len(photos))
+            if not self.renderer.sel_rows or self._selection_shape!=shape or message is None:
+                # 原函数创建原版控件，之后同结构消息复用这些控件。
+                self.renderer._build_selection_rows()
+                self._selection_shape = shape
+            else:
+                widgets = self.renderer.sel_rows[0]["bg"]
+                avatar = self.renderer._avatar_photo(message.avatar_data)
+                widgets[2].configure(image=avatar or "")
+                widgets[4].configure(text=f"{message.sender_name}  {datetime.fromtimestamp(message.ts):%H:%M:%S}")
+                image_start = 5
+                if text:
+                    widgets[5].configure(text=text)
+                    image_start = 6
+                for widget,photo in zip(widgets[image_start:],photos):
+                    widget.configure(image=photo)
+                self.renderer._sel_photos = photos
+                if selection_changed:
+                    self.renderer._apply_selection_visuals()
             self._selection_key = key
-        else:
+        elif selection_changed:
             self.renderer._apply_selection_visuals()
 
     def measure_height(self):
@@ -186,7 +238,15 @@ class MessageRow(tk.Frame):
 
     def image_ready(self,key,image):
         from PIL import ImageTk
-        self.photo = ImageTk.PhotoImage(image,master=self)
+        cache = self.view.image_photos
+        self.photo = cache.get(key)
+        if self.photo is None:
+            self.photo = ImageTk.PhotoImage(image,master=self)
+            cache[key] = self.photo
+            while len(cache)>64:
+                cache.popitem(last=False)
+        else:
+            cache.move_to_end(key)
         self.photos[key] = self.photo
         self._state = None
         self._measured_height = None

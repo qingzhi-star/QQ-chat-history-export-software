@@ -149,6 +149,29 @@ def test_reply_outer5_summary_is_kept():
     assert seg.text == "引用摘要"
 
 
+def test_reply_local_text_and_empty_quote_preserve_sender():
+    from qqexport.qq import msgmap as mm
+    from qqexport.export.txt import segment_text
+    from qqexport.export.html import _seg_html
+    for text in ("合成引用", ""):
+        child = sp.element(8, [sp.field_bytes(mm.F_REPLY_LOCAL_TEXT,text.encode()),
+                               sp.field_bytes(mm.F_REPLY_UID,b"u_synthetic")])
+        message = msg.parse_message(row(sp.message(child),outer=5,sub=4),ctx())
+        segment = message.segments[0]
+        assert segment.kind == "reply"
+        assert segment.quoted.sender_uid == "u_synthetic"
+        expected = text or "引用正文未保存在本机"
+        assert expected in segment_text(segment)
+        assert expected in _seg_html(segment)
+
+
+def test_reply_nested_body_preserves_all_elements():
+    body = sp.message(sp.text_element("合成一"),sp.text_element("合成二"))
+    child = sp.element(7,[sp.field_bytes(sp.F_REPLY_BODY,body)])
+    segment = msg.parse_message(row(sp.message(child)),ctx()).segments[0]
+    assert [s.text for s in segment.quoted.segments] == ["合成一","合成二"]
+
+
 def test_legacy_forward_previews_and_truncation():
     xml = ("<msg><dataitem><sourcename>张三</sourcename><datadesc>你好</datadesc></dataitem>"
            "<dataitem><sourcename>李四</sourcename><datadesc>在吗</datadesc></dataitem></msg>")

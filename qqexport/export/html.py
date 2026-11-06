@@ -141,9 +141,11 @@ def _seg_html(seg: Segment, emoji: dict[int, str] | None = None,
     if seg.kind == "reply":
         quote = ""
         if seg.quoted is not None:
-            text = _segs_text(seg.quoted.segments) or "[非文本]"
+            text = _segs_text(seg.quoted.segments) or ("[非文本]" if seg.quoted.segments else "引用正文未保存在本机")
             quote = (f'<blockquote>{_e(seg.quoted.sender_name)}：'
                      f'{_e(text)}</blockquote>')
+        if not quote and not seg.text:
+            return f'<div class="text">{_e(segment_text(seg))}</div>'
         return quote + f'<div class="text">{_e(seg.text)}</div>'
     if seg.kind == "markdown":
         return f'<div class="text">{_e(clean_markdown(seg.text))}</div>'

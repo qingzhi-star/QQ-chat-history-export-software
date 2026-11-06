@@ -715,10 +715,13 @@ class App:
                 if seg.quoted is not None:
                     quote = " ".join(
                         txt.segment_text(s) for s in seg.quoted.segments).strip()
+                    quote = quote or "引用正文未保存在本机"
                     self.text.insert("end", f"↪ {seg.quoted.sender_name}：{quote}\n",
                                      "quote")
                 if seg.text:
                     self.text.insert("end", seg.text, tag)
+                elif seg.quoted is None:
+                    self.text.insert("end",txt.segment_text(seg),"quote")
                 continue
             if seg.kind == "face" and seg.face_id is not None:
                 photo = self._emoji_photo(seg.face_id)
@@ -1037,10 +1040,6 @@ class App:
             return "── 撤回了一条消息 ──"
         parts = []
         for seg in m.segments:
-            if seg.kind == "reply" and seg.quoted is not None:
-                quote = " ".join(txt.segment_text(x)
-                                 for x in seg.quoted.segments).strip()
-                parts.append(f"↪ {seg.quoted.sender_name}：{quote}")
             parts.append(txt.segment_text(seg))
         return "\n".join(p for p in parts if p)
 

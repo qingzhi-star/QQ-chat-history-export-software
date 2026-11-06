@@ -20,7 +20,7 @@ from . import tables
 MAX_REPLY_DEPTH = 8
 MAX_FORWARD_CHARS = 1024*1024
 _REPLY_FIELDS = (mm.F_REPLY_BODY, mm.F_REPLY_UID, mm.F_REPLY_TS,
-                 mm.F_REPLY_SUMMARY)
+                 mm.F_REPLY_SUMMARY, mm.F_REPLY_LOCAL_TEXT)
 
 
 def _default_name(uid: str | None, uin: str | None,
@@ -142,11 +142,10 @@ def _quoted_message(body: bytes, ctx: ParseContext, *, depth: int,
     parsed = proto.as_message(body)
     children = [bytes(v) for v in parsed.fields.get(mm.BLOB_FIELD, [])
                 if isinstance(v, (bytes, bytearray))]
-    element = children[0] if children else body
-    segment = parse_element(element, ctx, depth=depth)
+    segments = [parse_element(element,ctx,depth=depth) for element in (children or [body])]
     return Message(msg_id=0, ts=ts, sender_uid=uid, sender_uin=None,
                    sender_name=ctx.display_name(uid, None, ctx.group_id),
-                   is_self=False, segments=[segment])
+                   is_self=False, segments=segments)
 
 
 def _reply_segment(child: proto.Parsed, ctx: ParseContext, *,
@@ -159,6 +158,12 @@ def _reply_segment(child: proto.Parsed, ctx: ParseContext, *,
             body, ctx, depth=depth + 1,
             uid=proto.get_text(child, mm.F_REPLY_UID),
             ts=proto.get_int(child, mm.F_REPLY_TS) or 0)
+    elif proto.get_first(child,mm.F_REPLY_LOCAL_TEXT) is not None:
+        uid = proto.get_text(child,mm.F_REPLY_UID)
+        text = proto.get_text(child,mm.F_REPLY_LOCAL_TEXT) or ""
+        quoted = Message(msg_id=0,ts=proto.get_int(child,mm.F_REPLY_TS) or 0,sender_uid=uid,
+            sender_uin=None,sender_name=ctx.display_name(uid,None,ctx.group_id),is_self=False,
+            segments=[Segment("text",text=text)] if text else [])
     return Segment(kind="reply", text=summary, quoted=quoted)
 
 
