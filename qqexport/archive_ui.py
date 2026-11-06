@@ -157,6 +157,7 @@ def clear_library(app):
 def open_attachment(app,media):
     if media is None:
         return
+    session = app.session
     if media.kind=="image":
         if media.data_uri:
             ImageViewer(app.root,data_uri=media.data_uri)
@@ -173,13 +174,14 @@ def open_attachment(app,media):
     output = filedialog.asksaveasfilename(parent=app.root,title="保存附件后打开",initialdir=app.last_out,
                                          initialfile=media.filename or media.source.name)
     if output:
+        if session is None or session.retired:
+            return
         from qqexport.export.orchestrator import validate_destination
         try:
-            validate_destination(app.source,Path(output))
+            validate_destination(session.source,Path(output))
         except ValueError as exc:
             messagebox.showerror("无法保存",str(exc),parent=app.root)
             return
-        session = app.session
         def copy(_,cancel):
             import time
             destination = Path(output)

@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from qqexport.export.model import Chat, Message, Segment
-from qqexport.export.txt import _size, clean_markdown
+from qqexport.export.txt import _size, clean_markdown,segment_text,card_title
 
 _CSS = """
 :root{--bg:#f5f6f8;--card:#fff;--self:#2f6fed;--self-fg:#fff;--muted:#888}
@@ -125,17 +125,18 @@ def _seg_html(seg: Segment, emoji: dict[int, str] | None = None,
             name = _e(m.filename or Path(m.rel_path).name)
             return (f'<div class="text">📄 {name} ({_size(m.size)}) · '
                     f'<a download href="{src}">下载</a></div>')
-        return '<div class="text">[文件]</div>'
+        return f'<div class="text">{_e(segment_text(seg))}</div>'
     if seg.kind in ("video", "voice"):
         m = seg.media
-        if m is not None and not m.missing and m.rel_path:
+        if link_files and m is not None and not m.missing and m.rel_path:
             src = _e(m.rel_path)
             if seg.kind == "video":
                 return f'<video controls preload="metadata" src="{src}"></video>'
-            sec = f"{m.duration_ms // 1000}″" if m.duration_ms else ""
+            sec = f"{m.duration_ms / 1000:g} 秒" if m.duration_ms else ""
+            name = _e(m.filename or (m.source.name if m.source else "原始音频"))
             return (f'<div class="text">▶ 语音 {sec} · '
-                    f'<a download href="{src}">下载</a></div>')
-        return f'<div class="text">[{"视频" if seg.kind == "video" else "语音"}]</div>'
+                    f'<a download="{name}" href="{src}">下载原始音频</a>（不转码）</div>')
+        return f'<div class="text">{_e(segment_text(seg))}</div>'
     if seg.kind == "reply":
         quote = ""
         if seg.quoted is not None:
@@ -148,11 +149,16 @@ def _seg_html(seg: Segment, emoji: dict[int, str] | None = None,
     if seg.kind == "forward_legacy":
         items = "".join(f'<div>{_e(n)}：{_e(t)}</div>'
                         for n, t in (seg.forward_previews or []))
-        return f'<details><summary>[老式转发]</summary>{items}</details>'
+        return f'<details open><summary>[本地转发]</summary>{items}</details>'
     if seg.kind == "forward_nt":
+        if seg.forward_previews:
+            items = "".join(f'<div>{_e(name)}：{_e(text)}</div>' for name,text in seg.forward_previews)
+            return f'<details open><summary>[本地合并转发]</summary>{items}</details>'
         meta = seg.forward_meta or {}
         return (f'<div class="unknown">[合并转发 · 本地无缓存，未展开] '
                 f'{_e(meta.get("count", ""))} 条消息</div>')
+    if seg.kind == "ark":
+        return f'<div class="text">[卡片] {_e(card_title(seg.forward_meta))}</div>'
     if seg.kind == "unknown":
         detail = f'<details><summary>[未解析 字段 {_e(seg.unknown_field)}]</summary>' \
                  f'<code>{_e(seg.raw_hex)}</code></details>'

@@ -95,11 +95,8 @@ class ProductApp(App):
         self.status.configure(text=label+"；选择会话浏览，可搜索或导出，不需要 QQ")
 
     def _view_media(self,media):
-        if self.source and self.source.meta.get("archive"):
-            from qqexport.archive_ui import open_attachment
-            open_attachment(self,media)
-        else:
-            super()._view_media(media)
+        from qqexport.archive_ui import open_attachment
+        open_attachment(self,media)
 
     def _defer_cleanup(self,work):
         if self.tasks.closed:

@@ -79,6 +79,8 @@ class MessageRow(tk.Frame):
             self.head.configure(text=f"{message.sender_name}  {stamp}")
             self.avatar.configure(text=(message.sender_name or "?")[:1])
             text = "\n".join(segment_text(s) for s in message.segments)
+            if len(text)>8000:
+                text = text[:8000]+"\n…（预览省略，复制或导出包含全文）"
             if message.is_recall:
                 text = "── 撤回了一条消息 ──"
             self.body.configure(text=text, anchor="e" if message.is_self else "w",

@@ -162,7 +162,7 @@ def test_legacy_forward_previews_and_truncation():
     m2 = msg.parse_message(row(sp.message(sp.legacy_forward_element(long_xml)),
                                outer=8), ctx())
     total = sum(len(a) + len(b) for a, b in m2.segments[0].forward_previews)
-    assert total <= 500
+    assert total == 801
 
 
 def test_nt_forward_meta_json():

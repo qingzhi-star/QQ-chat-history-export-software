@@ -18,7 +18,7 @@ from . import proto
 from . import tables
 
 MAX_REPLY_DEPTH = 8
-MAX_FORWARD_CHARS = 500
+MAX_FORWARD_CHARS = 1024*1024
 _REPLY_FIELDS = (mm.F_REPLY_BODY, mm.F_REPLY_UID, mm.F_REPLY_TS,
                  mm.F_REPLY_SUMMARY)
 
@@ -71,7 +71,9 @@ def _media(child: proto.Parsed, kind: str, ctx: ParseContext) -> MediaRef:
                       else f"https://{remote_host}{remote_path}")
     if ctx.resolve_media is not None:
         ref = ctx.resolve_media(kind, md5_hex, local_path, filename)
-        return replace(ref, remote_url=remote_url) if remote_url else ref
+        return replace(ref,remote_url=remote_url,width=width if width is not None else ref.width,
+                       height=height if height is not None else ref.height,size=size if size is not None else ref.size,
+                       duration_ms=duration if duration is not None else ref.duration_ms)
     return MediaRef(kind=kind, missing=True, width=width, height=height,
                     size=size, duration_ms=duration, filename=filename,
                     remote_url=remote_url)
@@ -86,10 +88,12 @@ def _json_meta(text: str) -> dict:
 
 
 def _legacy_previews(xml_text: str) -> list[tuple[str, str]]:
+    if len(xml_text)>4*1024*1024:
+        return [("提示","[本地转发超过解析上限，未展开]")]
     try:
         root = ElementTree.fromstring(xml_text)
     except ElementTree.ParseError:
-        return []
+        return [("提示","[本地转发数据不可解析，未展开]")]
     out: list[tuple[str, str]] = []
     total = 0
     for item in root.iter("dataitem"):
@@ -97,13 +101,40 @@ def _legacy_previews(xml_text: str) -> list[tuple[str, str]]:
         desc = (item.findtext("datadesc") or "").strip()
         room = MAX_FORWARD_CHARS - total - len(name)
         if room <= 0:
+            out.append(("提示","[本地转发超过解析上限，后续未展开]"))
             break
+        truncated = len(desc)>room
         desc = desc[:room]
         out.append((name, desc))
         total += len(name) + len(desc)
         if total >= MAX_FORWARD_CHARS:
+            if truncated:
+                out.append(("提示","[本地转发超过解析上限，后续未展开]"))
             break
-    return out
+    return out or [("提示","[本地无可解析转发正文，未展开]")]
+
+
+def _nt_forward(text):
+    meta = _json_meta(text)
+    cached = meta.get("messages")
+    previews,total = [],0
+    if isinstance(cached,list):
+        for item in cached[:10000]:
+            if not isinstance(item,dict) or not isinstance(item.get("text"),str):
+                previews.append(("提示","[本地非文本转发未展开]"))
+                continue
+            name = item.get("sender","")
+            name = name if isinstance(name,str) else ""
+            room = max(0,MAX_FORWARD_CHARS-total-len(name))
+            content = item["text"][:room]
+            previews.append((name,content))
+            total += len(name)+len(content)
+            if len(item["text"])>room or total>=MAX_FORWARD_CHARS:
+                previews.append(("提示","[本地转发超过解析上限，后续未展开]"))
+                break
+        if len(cached)>10000:
+            previews.append(("提示","[本地转发超过条数上限，后续未展开]"))
+    return Segment(kind="forward_nt",forward_meta=meta,forward_previews=previews or None)
 
 
 def _quoted_message(body: bytes, ctx: ParseContext, *, depth: int,
@@ -157,9 +188,7 @@ def parse_element(child_bytes: bytes, ctx: ParseContext, *, outer: int = 0,
     content_type = proto.get_int(child, mm.F_CONTENT_TYPE) or 0
 
     if outer == mm.OUTER_FORWARD_NT:
-        return Segment(kind="forward_nt",
-                       forward_meta=_json_meta(proto.get_text(
-                           child, mm.F_FORWARD_NT_JSON) or ""))
+        return _nt_forward(proto.get_text(child, mm.F_FORWARD_NT_JSON) or "")
     if outer == mm.OUTER_LEGACY_FORWARD:
         return Segment(kind="forward_legacy",
                        forward_previews=_legacy_previews(
@@ -200,7 +229,8 @@ def parse_element(child_bytes: bytes, ctx: ParseContext, *, outer: int = 0,
     if content_type == mm.CONTENT_GRAY_TIP:
         return Segment(kind="gray_tip", text=proto.get_text(child, mm.F_TEXT) or "")
     if content_type == mm.CONTENT_RED_BAG:
-        return Segment(kind="red_bag", text="[红包]")
+        title = proto.get_text(child,mm.F_TEXT)
+        return Segment(kind="red_bag", text="[红包]"+(" "+title if title else ""))
     if content_type == mm.CONTENT_MARKDOWN:
         text = (proto.get_text(child, mm.F_MARKDOWN_TEXT)
                 or proto.get_text(child, mm.F_TEXT) or "")

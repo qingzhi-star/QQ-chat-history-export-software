@@ -325,7 +325,7 @@ def export_chats(source: ExportSource, chat_ids: list[str],
                     (r.size if r.size is not None else r.source.stat().st_size)
                     for r in refs if r.source is not None and not r.missing
                     and r.source.is_file())
-                file_refs = ([r for r in refs if r.kind == "file"]
+                file_refs = ([r for r in refs if r.kind in {"file","voice","video"}]
                              if keep_html else [])
                 if file_refs:
                     copied = media_copy.copy_media(file_refs, work / "media",cancel=opts.cancel)

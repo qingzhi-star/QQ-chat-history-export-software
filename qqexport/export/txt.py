@@ -57,13 +57,15 @@ def segment_text(seg: Segment) -> str:
     if seg.kind == "text":
         return seg.text or ""
     if seg.kind == "image":
-        return "[图片]"
+        return "[图片]"+("（本机无原图）" if seg.media and seg.media.missing else "")
     if seg.kind == "file":
-        return "[文件]"
+        m = seg.media
+        return "[文件]"+(" "+m.filename if m and m.filename else "")+("（本机缺失）" if m and m.missing else "")
     if seg.kind == "video":
         return "[视频]"
     if seg.kind == "voice":
-        return "[语音]"
+        m = seg.media
+        return "[语音]"+(f" {m.duration_ms/1000:g} 秒" if m and m.duration_ms else "")+("（本机缺失）" if m and m.missing else "")
     if seg.kind == "face":
         return "[表情]"
     if seg.kind == "market_face":
@@ -71,7 +73,7 @@ def segment_text(seg: Segment) -> str:
     if seg.kind == "gray_tip":
         return seg.text or ""
     if seg.kind == "red_bag":
-        return "[红包]"
+        return seg.text or "[红包]"
     if seg.kind == "markdown":
         return clean_markdown(seg.text)
     if seg.kind == "reply":
@@ -80,20 +82,36 @@ def segment_text(seg: Segment) -> str:
             return f"[回复 {seg.quoted.sender_name}：{quote}] {seg.text or ''}".rstrip()
         return f"[回复] {seg.text or ''}".rstrip()
     if seg.kind == "forward_nt":
-        return "[合并转发]"
+        if seg.forward_previews:
+            return "[本地合并转发]\n"+"\n".join(f"{name}：{text}" for name,text in seg.forward_previews)
+        return "[合并转发 · 本地无缓存，未展开] "+card_title(seg.forward_meta)
     if seg.kind == "forward_legacy":
-        return "[老式转发]"
+        return "[本地转发]\n"+"\n".join(f"{name}：{text}" for name,text in (seg.forward_previews or []))
     if seg.kind == "poke":
         return seg.text or "[戳一戳]"
     if seg.kind == "call":
         return seg.text or "[通话]"
     if seg.kind == "ark":
-        return "[卡片]"
+        return "[卡片] "+card_title(seg.forward_meta)
     if seg.kind == "live":
         return "[直播]"
     if seg.kind == "unknown":
         return "[未解析]"
     return f"[{seg.kind}]"
+
+
+def card_title(meta,depth=0):
+    if not isinstance(meta,dict) or depth>4:
+        return ""
+    for key in ("title","desc","prompt","summary"):
+        if isinstance(meta.get(key),str) and meta[key].strip():
+            return meta[key].strip()[:2000]
+    for value in list(meta.values())[:64]:
+        if isinstance(value,dict):
+            title = card_title(value,depth+1)
+            if title:
+                return title
+    return str(meta.get("app", "本地无标题"))[:200]
 
 
 def _line(msg: Message) -> str:
