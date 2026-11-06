@@ -3,6 +3,7 @@ import tkinter as tk
 from qqexport.export.model import Message, Segment
 from qqexport.virtual_list import HeightIndex, VirtualMessages
 from qqexport.tasks import DataSession
+from qqexport.tk_runtime import create_root
 
 
 def test_height_index_updates_and_locates():
@@ -14,7 +15,7 @@ def test_height_index_updates_and_locates():
 
 
 def test_virtual_widget_pool_and_scroll_stay_bounded():
-    root = tk.Tk()
+    root = create_root()
     root.geometry("800x600")
     view = None
     def request(offset,size):
@@ -56,13 +57,14 @@ def test_source_retirement_waits_for_last_lease():
     assert len(closed) == 2
 
 
-def test_product_paging_selection_dates_and_chat_switch(tmp_path):
+def test_product_paging_selection_dates_and_chat_switch(tmp_path,monkeypatch):
     import time
     from qqexport.product_gui import ProductApp
     from qqexport.repository import MessageRepository
     from qqexport.core.discover import QQAccount
     from tests.test_repository import source
     src = source(tmp_path)
+    monkeypatch.setenv("QQEXPORT_HOME",str(tmp_path/"home"))
     src.meta["account"] = QQAccount("12345",tmp_path,tmp_path/"nt_db",tmp_path/"nt_data")
     repo = MessageRepository(src)
 
@@ -73,7 +75,7 @@ def test_product_paging_selection_dates_and_chat_switch(tmp_path):
             self.session = DataSession(src,repo)
             self._loaded(src,src.chats(),{}, {})
 
-    root = tk.Tk()
+    root = create_root()
     app = SyntheticApp(root)
     def wait(predicate):
         end = time.monotonic()+5
@@ -105,5 +107,17 @@ def test_product_paging_selection_dates_and_chat_switch(tmp_path):
         app._start_preview(info)
         wait(lambda: not app._busy and bool(app.virtual.pages))
         assert app.current_chat_id == "c2c:u_a"
+        app._show_search()
+        dialog = app._search_dialog
+        dialog.text.set("synthetic 50")
+        dialog.mode.set("exact")
+        dialog.search(0)
+        wait(lambda: len(dialog.hits)==1)
+        dialog.tree.selection_set("0")
+        dialog.jump()
+        wait(lambda: app.virtual.highlight==50 and not app._busy)
+        dialog.clear_index()
+        wait(lambda: not app.session.search.ready)
+        dialog.close()
     finally:
         app.close()

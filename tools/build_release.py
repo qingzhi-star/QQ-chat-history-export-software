@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -176,8 +177,11 @@ def build(output: Path, *, iscc: Path | None, wheelhouse: Path | None = None) ->
              "--name", "QQExport", "--distpath", str(stage), "--workpath", str(work / "pyinstaller"),
              "--specpath", str(work), "--hidden-import", "PIL._tkinter_finder",
              "--collect-submodules", "qqexport", "--copy-metadata", "qqexport",
+             "--copy-metadata", "regex",
              "--version-file", str(version_file), str(ROOT / "tools" / "launch_gui.py")], log, env=env)
         bundle = stage / "QQExport"
+        for name in ("LICENSE","NOTICE","README.md"):
+            shutil.copy2(ROOT/name,bundle/name)
         for path in bundle.rglob("direct_url.json"):
             path.unlink()  # pip 本机安装路径不属于分发资产。
         artifacts = []

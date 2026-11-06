@@ -13,3 +13,6 @@ WAL 帧校验和与 commit 边界语义。本项目代码为独立编写，未�
 
 SQLCipher 加密格式由 Zetetic LLC 设计，相关参数属其公开文档范畴。
 QQ 与 QQ NT 为腾讯公司商标。本项目与腾讯公司无任何关联、未获其授权。
+
+P2 高级正则搜索使用 regex（https://github.com/mrabarnett/mrab-regex）。
+该依赖的许可表达式为 Apache-2.0 AND CNRI-Python；其许可文本随分发包元数据保留。

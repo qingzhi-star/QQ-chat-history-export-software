@@ -7,6 +7,8 @@
 - Repository 以 mode=ro 打开解密副本；内存 TEMP 定位表只存会话/时间/消息 ID/行号。
   稳定游标为 `(ts,msg_id,rowid)`，rowid 仅处理重复键，不改变公开消息 ID；正文按页解析。
 - 搜索默认 SQLite 内存 FTS，关闭数据源/退出时销毁；不默认产生持久正文索引。
+- 无 FTS5 trigram 时用 instr 对 casefold 正文进行字面包含匹配，避免把用户的 %/_
+  解释为 SQL 通配符；高级正则使用 regex 的真实超时，防止复杂表达式长时间占用线程。
   历史关键词单独本地保存需显式启用，提供清空。搜索结果、队列、增量和归档统一复用
   Message/Segment 与导出管线。
 - 异步工作只通过队列将结果交给 Tk 主线程；每次切换数据源/会话有 generation。

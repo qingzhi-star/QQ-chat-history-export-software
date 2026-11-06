@@ -17,7 +17,8 @@ def run_smoke(report: Path) -> int:
             def _load_chats(self):
                 self.count_label.configure(text="合成启动检查")
 
-        root = tk.Tk()
+        from qqexport.tk_runtime import create_root
+        root = create_root()
         root.withdraw()
         app = SmokeApp(root)
         root.update()

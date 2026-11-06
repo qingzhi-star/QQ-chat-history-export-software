@@ -106,6 +106,18 @@ def build_parser() -> argparse.ArgumentParser:
     lst = sub.add_parser("list", help="列出本机会话（标题为可读显示名）")
     _add_account_args(lst)
 
+    search = sub.add_parser("search", help="本机会话/全库内存搜索，不持久化正文索引")
+    _add_account_args(search)
+    search.add_argument("--query",default="")
+    search.add_argument("--chat",default=None)
+    search.add_argument("--sender",default=None)
+    search.add_argument("--type",dest="kind",default=None)
+    search.add_argument("--start",type=_parse_date,default=None)
+    search.add_argument("--end",type=lambda s:_parse_date(s,end=True),default=None)
+    search.add_argument("--match",choices=["contains","exact","regex"],default="contains")
+    search.add_argument("--limit",type=int,default=200)
+    search.add_argument("--offset",type=int,default=0)
+
     exp = sub.add_parser("export", help="导出会话为 txt/html/pdf")
     _add_account_args(exp)
     target = exp.add_mutually_exclusive_group(required=True)
@@ -333,10 +345,41 @@ def _cmd_export(args) -> int:
         source.close()
 
 
+def _cmd_search(args):
+    from qqexport.repository import MessageRepository
+    from qqexport.search import SearchIndex,Query
+    source = _open_source(args)
+    if source is None:
+        return EXIT_FAIL
+    repo = index = None
+    try:
+        repo = MessageRepository(source)
+        index = SearchIndex()
+        index.build(repo)
+        query = Query(args.query,args.chat,args.sender,args.kind,args.start,args.end,args.match)
+        for hit in index.find(query,limit=args.limit,offset=args.offset):
+            print(f"{hit.chat_id}\t{hit.msg_id}\t{hit.ts}\t{hit.sender}\t{hit.summary}")
+        return EXIT_OK
+    except Exception as exc:
+        print(f"错误：搜索失败（{type(exc).__name__}）",file=sys.stderr)
+        return EXIT_FAIL
+    finally:
+        if index is not None:
+            index.close()
+        if repo is not None:
+            repo.close()
+        source.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     _force_utf8_stdio()
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command == "search":
+        if not 1<=args.limit<=1000 or args.offset<0 or len(args.query)>1000:
+            parser.error("搜索页大小必须为 1–1000，位置非负，关键词最多 1000 字符")
+        if args.start is not None and args.end is not None and args.start>args.end:
+            parser.error("开始日期不能晚于结束日期")
     if args.command == "export":
         if args.start is not None and args.end is not None and args.start > args.end:
             parser.error("开始日期不能晚于结束日期")
@@ -357,6 +400,8 @@ def _dispatch(args) -> int:
         return _cmd_doctor(args)
     if args.command == "list":
         return _cmd_list(args)
+    if args.command == "search":
+        return _cmd_search(args)
     if args.command == "export":
         return _cmd_export(args)
     if args.command == "gui":

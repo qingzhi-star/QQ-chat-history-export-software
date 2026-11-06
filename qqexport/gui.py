@@ -1407,7 +1407,7 @@ class DateRangeDialog(tk.Toplevel):
 
 
 class FormatDialog(tk.Toplevel):
-    def __init__(self, parent, default_out: str, *, on_ok):
+    def __init__(self, parent, default_out: str, *, on_ok, allowed_formats=None):
         super().__init__(parent)
         self.on_ok = on_ok
         self.title("选择格式和位置")
@@ -1423,6 +1423,9 @@ class FormatDialog(tk.Toplevel):
         labels = {"txt": "TXT（纯文本）", "pdf": "PDF（含图片）",
                   "html": "HTML（含文件链接）"}
         for key in ("txt", "pdf", "html"):
+            if allowed_formats is not None and key not in allowed_formats:
+                self.vars[key].set(False)
+                continue
             ttk.Checkbutton(body, text=labels[key],
                             variable=self.vars[key]).pack(anchor="w", padx=16)
         ttk.Label(body, text="导出位置", font=("Microsoft YaHei UI", 10, "bold")).pack(
@@ -1487,7 +1490,8 @@ class ImageViewer(tk.Toplevel):
 
 def run_gui(*, data_dir: Path | None = None, uin: str | None = None) -> int:
     from qqexport.product_gui import ProductApp
-    root = tk.Tk()
+    from qqexport.tk_runtime import create_root
+    root = create_root()
     app = ProductApp(root, data_dir=data_dir, uin=uin)
     root.report_callback_exception = (
         lambda exc, value, tb: app._log_exception("tk", value))

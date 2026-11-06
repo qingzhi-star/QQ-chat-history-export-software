@@ -36,6 +36,31 @@ class ProductApp(App):
         self.virtual = VirtualMessages(self.text.master, self._request_page, self._toggle_check,
                                        on_open=self._view_media, image_loader=self._load_image)
         self.virtual.pack(fill="both", expand=True)
+        self.tools_menu = tk.Menu(self.root,tearoff=False)
+        self.tools_menu.add_command(label="搜索消息",command=self._show_search)
+        menu = tk.Menu(self.root)
+        menu.add_cascade(label="工具",menu=self.tools_menu)
+        self.root.configure(menu=menu)
+
+    def _show_search(self):
+        if self.session is not None:
+            from qqexport.search_ui import SearchDialog
+            existing = getattr(self,"_search_dialog",None)
+            if existing is not None and existing.winfo_exists() and existing.session is self.session:
+                existing.lift()
+            else:
+                if existing is not None and existing.winfo_exists():
+                    existing.close()
+                self._search_dialog = SearchDialog(self)
+
+    def jump_to_hit(self, hit):
+        idx = next((i for i,info in enumerate(self.infos) if info.chat_id==hit.chat_id),None)
+        if idx is None:
+            return
+        self.selected_idx = idx
+        self._paint_rows()
+        self._pending_jump = hit.position
+        self._start_preview(self.infos[idx],anchor=(max(0,hit.position-1),0),bottom=False)
 
     def _error(self, exc):
         self._log_exception("product", exc)
@@ -43,7 +68,7 @@ class ProductApp(App):
         self.virtual.pending.clear()
         self.status.configure(text=f"操作失败：{type(exc).__name__}", foreground="#b00")
 
-    def _submit(self, session, work, done, *, gen=None):
+    def _submit(self, session, work, done, *, gen=None, error=None):
         try:
             release = session.pin()
         except RuntimeError as exc:
@@ -55,7 +80,7 @@ class ProductApp(App):
                     and (gen is None or gen == self._render_gen))
         future = self.tasks.submit(lambda: work(session.repository),
                                   lambda value: done(value) if valid() else None,
-                                  lambda exc: self._error(exc) if valid() else None)
+                                  lambda exc: (error or self._error)(exc) if valid() else None)
         future.add_done_callback(lambda _: release())
         return future
 
@@ -163,6 +188,9 @@ class ProductApp(App):
         def ready(count):
             self.preview = []
             self.virtual.reset(count,anchor=anchor,bottom=bottom)
+            if getattr(self,"_pending_jump",None) is not None:
+                self.virtual.highlight = self._pending_jump
+                self._pending_jump = None
             self._busy = False
             self.export_btn.state(["!disabled"] if count else ["disabled"])
             self.status.configure(text=f"共 {count} 条 · 按需加载")

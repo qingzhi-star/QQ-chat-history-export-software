@@ -27,7 +27,7 @@ def dataset(root, count):
                                   media.build_index(root / "media"), "12345")
 
 
-def run(count):
+def run(count, search=False):
     with tempfile.TemporaryDirectory(prefix="qqexport-bench-") as temp:
         source = dataset(Path(temp), count)
         tracemalloc.start()
@@ -40,14 +40,28 @@ def run(count):
         streaming = time.perf_counter() - start
         peak = tracemalloc.get_traced_memory()[1] / (1024 * 1024)
         tracemalloc.stop()
+        search_metrics = {}
+        if search:
+            from qqexport.search import SearchIndex,Query
+            index = SearchIndex()
+            start = time.perf_counter()
+            index.build(repo)
+            search_metrics["index_seconds"] = round(time.perf_counter()-start,3)
+            for name,query in (("chat_search_ms",Query("benchmark",chat_id="c2c:u_a")),
+                               ("global_search_ms",Query("benchmark"))):
+                start = time.perf_counter()
+                assert index.find(query)
+                search_metrics[name] = round((time.perf_counter()-start)*1000,2)
+            index.close()
         repo.close()
         assert found == count
         return {"messages": count, "open_first_page_ms": round(opening*1000, 2),
-                "stream_seconds": round(streaming, 3), "python_peak_mib": round(peak, 2)}
+                "stream_seconds": round(streaming, 3), "python_peak_mib": round(peak, 2), **search_metrics}
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--messages", type=int, default=100000)
+    parser.add_argument("--search",action="store_true")
     args = parser.parse_args()
-    print(json.dumps(run(args.messages)))
+    print(json.dumps(run(args.messages,args.search)))

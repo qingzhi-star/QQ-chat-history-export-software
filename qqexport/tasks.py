@@ -84,6 +84,8 @@ class DataSession:
     def _cleanup(self):
         if self.retired and self.pins == 0 and self.source is not None:
             try:
+                if hasattr(self,"search"):
+                    self.search.close()
                 self.repository.close()
             finally:
                 self.source.close()
