@@ -1,5 +1,6 @@
 """合成本机账号选择和切换，不读取真实 QQ 或密钥。"""
 import time
+import threading
 import tkinter as tk
 from tkinter import ttk
 
@@ -8,6 +9,7 @@ from qqexport.export.session import ExportSource
 from qqexport.product_gui import ProductApp
 from qqexport.tk_runtime import create_root
 from tests.test_repository import source
+from qqexport.account_access import sqlcipher,keyscan
 
 
 def test_bottom_left_button_selects_switches_and_cancels(tmp_path,monkeypatch):
@@ -17,9 +19,15 @@ def test_bottom_left_button_selects_switches_and_cancels(tmp_path,monkeypatch):
     for account in accounts:
         account.data_dir.mkdir()
     monkeypatch.setattr(discover,"discover_accounts",lambda **kwargs:accounts)
-    monkeypatch.setattr(keystore.KeyStore,"load",lambda self,uin:"synthetic")
+    monkeypatch.setattr(keystore.KeyStore,"load",lambda self,uin:b"synthetic")
+    monkeypatch.setattr(sqlcipher,"read_header_and_page1",lambda path:b"synthetic header")
+    monkeypatch.setattr(sqlcipher,"detect_params",lambda candidate,header:object())
+    opened = []
     def open_source(account,key):
-        src = source(account.data_dir,count=3 if account==accounts[0] else 5)
+        directory = account.data_dir/str(len(opened))
+        directory.mkdir()
+        opened.append(account.uin)
+        src = source(directory,count=3 if account==accounts[0] else 5)
         src.account_uin = account.uin
         src.meta["account"] = account
         return src
@@ -81,6 +89,37 @@ def test_bottom_left_button_selects_switches_and_cancels(tmp_path,monkeypatch):
         chooser().destroy()
         assert app.session is current and app.uin==accounts[1].uin
         assert app.preferences.last_account==accounts[1].uin
+        monkeypatch.setattr(keystore.KeyStore,"load",lambda self,uin:None)
+        app._open_account(accounts[0])
+        wait(lambda:"点击左下角选择账号" in app.status.cget("text"))
+        assert "RuntimeError" not in app.status.cget("text")
+        assert app.session is current and app.uin==accounts[1].uin
+        assert app.virtual.count==5
+        scans,saved = [],[]
+        release = threading.Event()
+        def scan(verify):
+            scans.append(verify(b"synthetic"))
+            assert release.wait(2)
+            return b"synthetic"
+        monkeypatch.setattr(keyscan,"scan_key",scan)
+        monkeypatch.setattr(keystore.KeyStore,"save",lambda self,uin,key:saved.append(uin))
+        responsive = []
+        def heartbeat():
+            responsive.append(app.account_button.instate(["disabled"]))
+            release.set()
+        root.after(100,heartbeat)
+        choose(0)
+        assert scans==[True] and saved==[accounts[0].uin]
+        assert responsive==[True]
+        assert "disabled" not in app.account_button.state()
+        app._select_chat(0)
+        wait(lambda:app.virtual.count==3 and not app._busy)
+        current = app.session
+        monkeypatch.setattr(keyscan,"scan_key",lambda verify:None)
+        app._open_account(accounts[1],auto_key=True)
+        wait(lambda:"未能自动获取" in app.status.cget("text"))
+        assert app.session is current and app.uin==accounts[0].uin
+        assert app.virtual.count==3 and "disabled" not in app.account_button.state()
         monkeypatch.setattr(discover,"discover_accounts",lambda **kwargs:[])
         app.account_button.invoke()
         wait(lambda:app.status.cget("text")=="未找到本机账号")

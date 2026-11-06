@@ -293,8 +293,8 @@ def scan_key(verify: Callable[[bytes], bool], *,
 
     每次打开进程只用只读权限。单进程失败（进程已退出、权限被拒）跳过并继续；
     全部进程都没命中且至少一个被拒时抛 ProcessAccessDenied（裁定 R27）。
-    扫描显式 opt-in：只有 `qqexport key scan` 与 `qqexport doctor --scan` 调用它
-    （修正案 A §6.1）。
+    扫描显式 opt-in：CLI 的 key scan / doctor --scan，或用户在 GUI 明确选择
+    账号后自动取口令；普通启动和后台刷新不触发扫描。
     """
     deadline = None if timeout_s is None else time.monotonic() + timeout_s
     denied = False

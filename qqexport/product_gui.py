@@ -9,13 +9,14 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from qqexport import config, selection
-from qqexport.core import discover, keystore
+from qqexport.core import discover
 from qqexport.export import orchestrator
 from qqexport.export.session import ExportSource
 from qqexport.gui import App, FormatDialog
 from qqexport.repository import MessageRepository
 from qqexport.tasks import DataSession, TaskRunner
 from qqexport.virtual_list import VirtualMessages
+from qqexport.account_access import account_key,AccountAccessError
 
 
 class ProductApp(App):
@@ -31,6 +32,7 @@ class ProductApp(App):
         self.gui_avatars = GuiAvatars(self)
         self.session = None
         self._source_gen = 0
+        self._account_opening = False
         self._closed = False
         self._thumbs = OrderedDict()
         self._image_pending = set()
@@ -127,6 +129,8 @@ class ProductApp(App):
         self._save_preferences()
 
     def _switch_account(self):
+        if self._account_opening:
+            return
         self.tasks.submit(lambda:discover.discover_accounts(explicit=self.data_dir),
             lambda accounts:self._choose_account(accounts) if accounts else self.status.configure(text="未找到本机账号"),self._error)
 
@@ -149,6 +153,8 @@ class ProductApp(App):
         from qqexport.export.archive import ArchiveRepository
         old = self.session
         self._source_gen += 1
+        self._account_opening = False
+        self.account_button.state(["!disabled"])
         self._render_gen += 1
         if self._watch_id:
             self.root.after_cancel(self._watch_id)
@@ -232,7 +238,11 @@ class ProductApp(App):
         self._log_exception("product", exc)
         self._busy, self._refreshing = False, False
         self.virtual.pending.clear()
-        self.status.configure(text=f"操作失败：{type(exc).__name__}", foreground="#b00")
+        if isinstance(exc,AccountAccessError):
+            text = exc.user_message
+        else:
+            text = f"操作失败：{type(exc).__name__}"
+        self.status.configure(text=text, foreground="#b00")
 
     def _submit(self, session, work, done, *, gen=None, error=None):
         if self._closed:
@@ -278,28 +288,34 @@ class ProductApp(App):
         dialog.title("选择本机账号")
         dialog.transient(self.root)
         ttk.Label(dialog,text="请选择本人账号（不会默认使用第一个）：").pack(padx=16,pady=10)
-        choice = ttk.Combobox(dialog,values=[discover.mask_uin(a.uin)+("（上次）" if a.uin==self.preferences.last_account else "") for a in accounts],state="readonly")
+        choice = ttk.Combobox(dialog,width=36,values=[discover.mask_uin(a.uin)
+            +("（当前）" if a.uin==self.uin else "（上次）" if a.uin==self.preferences.last_account else "")
+            for a in accounts],state="readonly")
         choice.pack(padx=16,pady=8)
+        ttk.Label(dialog,text="选择后自动准备并加载聊天记录，请保持所选账号已在 QQ 登录。",justify="left").pack(padx=16,pady=4)
         def accept():
             if choice.current() < 0:
                 return
             account = accounts[choice.current()]
             dialog.destroy()
-            self._open_account(account)
+            self._open_account(account,auto_key=True)
         ttk.Button(dialog,text="确定",command=accept).pack(pady=12)
         dialog.grab_set()
 
-    def _open_account(self, account, *, refresh=False):
+    def _open_account(self, account, *, refresh=False,auto_key=False):
+        if self._account_opening:
+            return
+        if not refresh:
+            self._account_opening = True
+            self.account_button.state(["disabled"])
         self._source_gen += 1
         gen = self._source_gen
-        self.status.configure(text="正在读取账号…")
+        self.status.configure(text="正在自动获取口令并读取账号…" if auto_key else "正在读取账号…",foreground="#666")
         anchor = self.virtual.anchor()
         bottom = self.virtual.at_bottom()
         current_id = self.current_chat_id if refresh else None
         def work():
-            key = keystore.KeyStore().load(account.uin)
-            if not key:
-                raise RuntimeError("没有缓存口令，请先运行 key set 或 key scan")
+            key = account_key(account,allow_scan=auto_key)
             source = ExportSource.open(account,key)
             try:
                 repo = MessageRepository(source)
@@ -319,6 +335,9 @@ class ProductApp(App):
             if gen != self._source_gen:
                 session.retire()
                 return
+            self._account_opening = False
+            self.account_button.state(["!disabled"])
+            self._busy = False
             old = self.session
             if not refresh:
                 self.batch_selected.clear()
@@ -346,7 +365,12 @@ class ProductApp(App):
                 self.title_label.configure(text="选择左侧会话查看内容")
                 self.export_btn.state(["disabled"])
                 self.status.configure(text="选择会话；双击打开本机附件，右键复制消息")
-        self.tasks.submit(work,ready,self._error)
+        def failed(exc):
+            if gen == self._source_gen:
+                self._account_opening = False
+                self.account_button.state(["!disabled"])
+                self._error(exc)
+        self.tasks.submit(work,ready,failed)
 
     def _select_chat(self, idx):
         if self.source is None or idx >= len(self.infos):
@@ -510,7 +534,7 @@ class ProductApp(App):
         if self.session is None or self._closed:
             return
         stamp = self._current_mtime()
-        if stamp and stamp != self._wal_mtime and not self._busy and not self.export_mode and not self._refreshing:
+        if stamp and stamp != self._wal_mtime and not self._busy and not self.export_mode and not self._refreshing and not self._account_opening:
             self._refreshing = True
             self._open_account(self.source.meta["account"],refresh=True)
         self._schedule_watch()
