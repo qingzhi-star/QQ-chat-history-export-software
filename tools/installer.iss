@@ -1,5 +1,5 @@
 ; QQ聊天记录导出 - Inno Setup 6
-#define MyAppName "绮录"
+#define MyAppName "绮录QQ聊天记录导出软件"
 #ifdef SmokeBuild
   #undef MyAppName
   #define MyAppName "QQExport Smoke Test"

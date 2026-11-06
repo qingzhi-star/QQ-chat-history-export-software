@@ -64,7 +64,7 @@ def test_profile_button_selects_switches_and_cancels(tmp_path,monkeypatch):
         assert app.account_button.winfo_rootx()<app.export_btn.winfo_rootx()
         assert app.account_button.winfo_rooty()<app.canvas.winfo_rooty()
         assert not app.count_label.winfo_ismapped()
-        assert root.title()=="绮录"
+        assert root.title()=="绮录QQ聊天记录导出软件"
         choose(0)
         app._select_chat(0)
         wait(lambda:app.virtual.count==3 and not app._busy)

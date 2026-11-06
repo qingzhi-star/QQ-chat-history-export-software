@@ -48,7 +48,7 @@ def test_profile_footer_and_centered_export_dialog(tmp_path,monkeypatch):
         assert predicate()
     try:
         root.update()
-        assert root.title()=="绮录" and root._brand_icon
+        assert root.title()=="绮录QQ聊天记录导出软件" and root._brand_icon
         assert app.accounts_panel.name.cget("text")=="合成用户名"
         assert app.accounts_panel.number.cget("text")=="QQ 12345"
         assert app.account_button.winfo_rooty()<app.canvas.winfo_rooty()

@@ -2,7 +2,7 @@
 from pathlib import Path
 import tkinter as tk
 
-APP_NAME = "绮录"
+APP_NAME = "绮录QQ聊天记录导出软件"
 ASSETS = Path(__file__).with_name("assets")
 
 
