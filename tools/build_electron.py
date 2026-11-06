@@ -91,7 +91,7 @@ def main():
     if source_identity()!=identity:
         raise ValueError("构建期间源码发生变化；不能发布该构建")
     manifest = dict(schema_version=2,version=version,electron=data["devDependencies"]["electron"],
-        release_title=f"绮录QQ聊天记录导出软件 v{version}",supported_platforms=["windows11-x64"],
+        release_title=f"v{version}",supported_platforms=["windows11-x64"],
         **identity,requirements_sha256=sha256(ROOT/"requirements-build.lock"),
         npm_lock_sha256=sha256(ROOT/"desktop/package-lock.json"),toolchain_sha256=sha256(ROOT/"build-toolchain.json"),
         files=tree_manifest(out/"win-unpacked"),artifacts=artifacts)

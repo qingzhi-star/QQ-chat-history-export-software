@@ -13,7 +13,7 @@ def release(tmp_path):
         path.write_bytes(b"synthetic asset")
         assets.append(dict(name=name,size=path.stat().st_size,sha256=br.sha256(path)))
     manifest = dict(schema_version=2,version="0.3.0",source_commit="synthetic",source_sha256="source",source_dirty=False,
-        supported_platforms=["windows11-x64"],release_title="绮录QQ聊天记录导出软件 v0.3.0",artifacts=assets,files=br.tree_manifest(bundle),
+        supported_platforms=["windows11-x64"],release_title="v0.3.0",artifacts=assets,files=br.tree_manifest(bundle),
         requirements_sha256=br.sha256(br.ROOT/"requirements-build.lock"),npm_lock_sha256=br.sha256(br.ROOT/"desktop/package-lock.json"),
         toolchain_sha256=br.sha256(br.ROOT/"build-toolchain.json"))
     path = tmp_path/"electron-build.json"

@@ -34,7 +34,7 @@
       "pdf.cjs",
       "privacy.cjs",
       "privacy-policy.json",
-      {"from":"../privacy.md","to":"privacy.md"}
+      "privacy.md"
     ],
     "extraResources": [
       {

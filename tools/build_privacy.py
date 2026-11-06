@@ -38,7 +38,8 @@ def main():
     parser.add_argument("--site",type=Path)
     args=parser.parse_args()
     page,metadata=render()
-    files={ROOT/"desktop/renderer/privacy.html":page,ROOT/"desktop/privacy-policy.json":metadata}
+    files={ROOT/"desktop/renderer/privacy.html":page,ROOT/"desktop/privacy-policy.json":metadata,
+           ROOT/"desktop/privacy.md":(ROOT/"privacy.md").read_text(encoding="utf-8")}
     for path,content in files.items():
         if args.check:
             if path.read_text(encoding="utf-8")!=content:

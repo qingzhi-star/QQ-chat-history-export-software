@@ -8,7 +8,9 @@ const NAME = '绮录QQ聊天记录导出软件';
 const ROOT = path.resolve(__dirname, '..');
 const DEVELOPMENT_PYTHON = process.env.QILU_PYTHON || 'python';
 let window, core, outputDirectory, quitting = false;
-const privacy=PrivacyGate.load(__dirname,app.isPackaged?path.join(__dirname,'privacy.md'):path.join(ROOT,'privacy.md'));
+let privacy;
+try{privacy=PrivacyGate.load(__dirname,app.isPackaged?path.join(__dirname,'privacy.md'):path.join(ROOT,'privacy.md'));}
+catch{/* 资源损坏时在应用就绪后给出可读提示，绝不启动数据内核。 */}
 const printer = new PdfPrinter();
 const allowed = new Set(['boot', 'switch', 'refresh', 'messages', 'media', 'openMedia', 'search', 'range']);
 protocol.registerSchemesAsPrivileged([{ scheme: 'qilu', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
@@ -34,6 +36,7 @@ function launchCore() {
     printPdf: request=>printer.print(request),cancelPdf:id=>printer.cancel(id) });
 }
 app.whenReady().then(async () => {
+  if(!privacy){dialog.showErrorBox('绮录无法启动','隐私条款资源缺失或校验失败。请重新下载并完整解压官方分发包，或重新安装绮录。未开始读取账号或聊天记录。');app.quit();return;}
   protocol.handle('qilu', request => {
     const url = new URL(request.url);
     if (url.hostname !== 'app') return new Response('', { status: 404 });

@@ -37,7 +37,7 @@ def validate(release,smoke,version,commit,source_sha):
         errors.append("构建必须来自当前干净提交和源码指纹")
     if manifest.get("supported_platforms")!=["windows11-x64"]:
         errors.append("本轮正式版仅验证 Windows 11 x64，不能扩大支持范围")
-    if manifest.get("release_title")!=f"绮录QQ聊天记录导出软件 v{version}":
+    if manifest.get("release_title")!=f"v{version}":
         errors.append("发行标题不一致")
     expected = {f"Qilu-Setup-{version}-x64.exe",f"Qilu-{version.replace('rc','-rc.')}-x64.zip"}
     assets = manifest.get("artifacts",[])
@@ -78,7 +78,7 @@ def validate(release,smoke,version,commit,source_sha):
 
 def notes(manifest):
     version = manifest["version"]
-    text = f"# 绮录QQ聊天记录导出软件 v{version}\n\n"
+    text = f"# v{version}\n\n"
     text += "适用于 **Windows 11 x64**。Windows 10 和其他架构未列入本版已验证支持范围。\n\n"
     text += "## 下载与运行\n\n- `Qilu-Setup-"+version+"-x64.exe`：安装版，带卸载程序。\n"
     text += "- `Qilu-"+version.replace("rc","-rc.")+"-x64.zip`：便携版，完整解压后运行 `绮录QQ聊天记录导出软件.exe`。\n\n"
