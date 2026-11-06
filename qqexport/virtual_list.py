@@ -66,7 +66,15 @@ class MessageRow(tk.Frame):
             widget.bind("<Button-3>", self.menu)
 
     def show(self, index, message, width):
-        self.body.configure(font=("Microsoft YaHei UI",9 if getattr(self.view,"density","normal")=="compact" else 10))
+        density = getattr(self.view,"density","normal")
+        state = (index,id(message),width,self.view.selecting,index in self.view.selected,
+                 self.view.highlight==index,density)
+        if getattr(self,"_state",None)==state:
+            return False
+        self._state = state
+        if getattr(self,"_density",None)!=density:
+            self._density = density
+            self.body.configure(font=("Microsoft YaHei UI",9 if density=="compact" else 10))
         changed = self.index != index or self.message is not message
         self.index, self.message = index, message
         if changed:
@@ -112,6 +120,7 @@ class MessageRow(tk.Frame):
                 self.check.create_line(6,10,10,14,16,6,fill="white",width=2)
         if self.view.highlight == index:
             self.body.configure(bg="#fff2ae")
+        return True
 
     def click(self, _):
         if self.view.selecting and self.message is not None:
@@ -220,8 +229,8 @@ class VirtualMessages(ttk.Frame):
         self.scrollbar.set(first,last)
         if (first,last) != self._last_scroll:
             self._last_scroll = (first,last)
-            self._needs_redraw = True
-            self.schedule()
+            if not self._drawing:
+                self.schedule()
 
     def wheel(self, event):
         self.canvas.yview_scroll(-int(event.delta/120)*3,"units")
@@ -253,19 +262,27 @@ class VirtualMessages(ttk.Frame):
         first = max(0,anchor-3)
         last = min(self.count, self.heights.locate(self.canvas.canvasy(self.canvas.winfo_height()))+5, first+60)
         wanted = set(range(first,last))
+        dirty = getattr(self,"_geometry_dirty",False) or getattr(self,"_width",None)!=width
+        self._geometry_dirty = False
+        self._width = width
         for index in list(self.rows):
             if index not in wanted:
                 row,item = self.rows.pop(index)
                 self.canvas.delete(item)
                 self.free.append(row)
+                dirty = True
         for index in sorted(wanted):
             if index not in self.rows:
                 row = self.free.pop() if self.free else MessageRow(self.canvas,self)
                 item = self.canvas.create_window(0,self.heights.prefix(index),window=row,anchor="nw",width=width)
                 self.rows[index] = (row,item)
+                dirty = True
             row,item = self.rows[index]
-            row.show(index,self.message(index),width)
-            self.canvas.itemconfigure(item,width=width)
+            if row.show(index,self.message(index),width):
+                dirty = True
+                self.canvas.itemconfigure(item,width=width)
+        if not dirty:
+            return
         self.update_idletasks()
         for index,(row,item) in self.rows.items():
             self.heights.set(index,row.winfo_reqheight()+3)
@@ -277,6 +294,10 @@ class VirtualMessages(ttk.Frame):
             self.canvas.yview_moveto(1)
         else:
             self.canvas.yview_moveto((self.heights.prefix(anchor)+offset)/max(1,total))
+        next_first = max(0,self.anchor()[0]-3)
+        next_last = min(self.count,self.heights.locate(self.canvas.canvasy(self.canvas.winfo_height()))+5,next_first+60)
+        if wanted!=set(range(next_first,next_last)):
+            self._needs_redraw = True
 
     def image_ready(self, index, image):
         if index not in self.rows or image is None:
@@ -285,4 +306,5 @@ class VirtualMessages(ttk.Frame):
         row,_ = self.rows[index]
         row.photo = ImageTk.PhotoImage(image)
         row.image.configure(image=row.photo)
+        self._geometry_dirty = True
         self.schedule()

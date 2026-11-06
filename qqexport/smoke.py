@@ -5,6 +5,42 @@ import json
 from pathlib import Path
 
 
+def verify_offline():
+    """冻结环境也验证加密、Pillow、归档、搜索和导出依赖确实可用。"""
+    import tempfile
+    from types import SimpleNamespace
+    from PIL import Image
+    from qqexport.export.model import Message,Segment,MediaRef
+    from qqexport.export.session import ChatInfo
+    from qqexport.export.archive import create_archive,ArchiveReader,ArchiveRepository
+    from qqexport.export.orchestrator import export_chats,ExportOptions
+    from qqexport.search import SearchIndex,Query
+    from qqexport.thumbnail_cache import ThumbnailCache
+    with tempfile.TemporaryDirectory(prefix="qqexport-smoke-offline-") as temp:
+        root = Path(temp)
+        image = root/"synthetic.png"
+        Image.new("RGB",(320,240),"blue").save(image)
+        messages = [Message(1,100,"u_synthetic",None,"Synthetic",False,
+            [Segment("text",text="synthetic search"),Segment("image",media=MediaRef("image",source=image,missing=False))])]
+        info = ChatInfo("c2c:u_synthetic","c2c","u_synthetic","u_synthetic","合成冒烟",None,1,100,100)
+        source = SimpleNamespace(meta={"synthetic":True},account_uin="synthetic",msg_db=image,
+                                 chats=lambda:[info],iter_messages=lambda chat:iter(messages))
+        archive = root/"synthetic.qqarchive"
+        create_archive(source,[info.chat_id],archive,password="synthetic-smoke-passphrase")
+        reader,index = ArchiveReader(archive,password="synthetic-smoke-passphrase"),SearchIndex()
+        try:
+            offline = reader.source()
+            index.build(ArchiveRepository(offline))
+            assert index.find(Query("synthetic"))
+            media = next(offline.iter_messages(info.chat_id)).segments[1].media
+            assert ThumbnailCache(limit=0).load(media).size==(240,180)
+            report = export_chats(offline,[info.chat_id],ExportOptions(formats={"txt","html"},out_base=root/"out"))
+            assert report.chats_exported==1
+        finally:
+            index.close()
+            reader.close()
+
+
 def run_smoke(report: Path) -> int:
     root = app = None
     result = {"ok": False}
@@ -23,8 +59,9 @@ def run_smoke(report: Path) -> int:
         app = SmokeApp(root)
         root.update()
         assert app.export_btn.winfo_exists() and app.text.winfo_exists()
+        verify_offline()
         result.update(ok=True, version=__version__, tcl=root.tk.call("info", "patchlevel"),
-                      account_discovery=False, window_title=root.title())
+                      account_discovery=False, window_title=root.title(),offline_pipeline=True)
         return 0
     except Exception as exc:
         result["error"] = type(exc).__name__

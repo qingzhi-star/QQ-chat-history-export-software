@@ -8,6 +8,7 @@ from tools import smoke_release
 
 
 def test_smoke_constructs_main_window_without_qq_access(tmp_path, monkeypatch):
+    monkeypatch.setenv("QQEXPORT_HOME",str(tmp_path/"state"))
     def forbidden(*args, **kwargs):
         raise AssertionError("smoke must not access QQ")
 
@@ -18,6 +19,7 @@ def test_smoke_constructs_main_window_without_qq_access(tmp_path, monkeypatch):
     result = json.loads(path.read_text(encoding="utf-8"))
     assert result["ok"] and result["version"] == __version__
     assert result["account_discovery"] is False
+    assert result["offline_pipeline"] is True
 
 
 def test_smoke_guard_refuses_existing_test_install(tmp_path, monkeypatch):
