@@ -1,7 +1,7 @@
 # 绮录QQ聊天记录导出软件
 
 <!-- version:start -->
-当前源码版本：**0.3.0rc1**。
+当前源码版本：**0.3.0rc2**。
 <!-- version:end -->
 新版 Windows 桌面端使用 Electron，沿用绮录 D 图标与双栏布局。安装版包含卸载程序，
 便携版为完整 exe / DLL / resources 目录压缩包；用户电脑无需安装 Python 或 Node.js。

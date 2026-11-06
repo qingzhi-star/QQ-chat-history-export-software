@@ -6,6 +6,6 @@ contextBridge.exposeInMainWorld('qilu', {
   chooseFolder: () => ipcRenderer.invoke('chooseFolder'),
   export: params => ipcRenderer.invoke('export', params),
   openOutput: () => ipcRenderer.invoke('openOutput'),
-  classic: () => ipcRenderer.invoke('classic'),
+  tool: params => ipcRenderer.invoke('tool', params),
   window: action => ipcRenderer.send('window', action),
 });

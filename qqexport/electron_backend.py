@@ -40,9 +40,12 @@ class DesktopBackend:
         self.generation, self.stamp = 0, None
         self.demo = demo
         self.preferences = config.Config.load()
+        from qqexport.desktop_tools import DesktopTools
+        self.tools = DesktopTools(self)
 
     def close(self):
         with self.lock:
+            self.tools.clear_search()
             if self.repo:
                 self.repo.close()
                 self.repo = None
@@ -69,7 +72,7 @@ class DesktopBackend:
             return dict(self.state(),accounts=[dict(uin="12345",name="绮录演示",avatar=None),
                 dict(uin="11111111",name="另一个演示账号",avatar=None)],version=__version__)
         self.accounts = {account.uin:account for account in discover.discover_accounts(
-            data_dir=Path(self.preferences.data_dir) if self.preferences.data_dir else None)}
+            explicit=Path(self.preferences.data_dir) if self.preferences.data_dir else None)}
         identities = []
         for account in self.accounts.values():
             identity = read_identity(account)
@@ -133,8 +136,9 @@ class DesktopBackend:
         if self.demo:
             uin,name = self.demo_uin,"绮录演示"
         elif self.source:
-            uin = self.source.account_uin
-            name = profile_name(self.source.contacts,uin)
+            uin = None if self.source.meta.get("display_account") else self.source.account_uin
+            name = (self.source.meta.get("display_account") or
+                    profile_name(self.source.contacts,uin))
         else:
             uin,name = None,"选择账号"
         chats = []
@@ -144,7 +148,7 @@ class DesktopBackend:
                 avatar=self.portrait(info.account,group=info.kind=="group")))
         chats.sort(key=lambda item:(-item["ts"],item["id"]))
         return dict(generation=self.generation,account=dict(uin=uin,name=name,avatar=self.portrait(uin)),
-                    chats=chats,formats=self.preferences.formats,out=self.preferences.last_out or str(Path.home()/"Documents"))
+                    chats=chats,formats=self.preferences.formats,density=self.preferences.density,out=self.preferences.last_out or str(Path.home()/"Documents"))
 
     def refresh(self):
         if self.account and self.account_stamp(self.account)!=self.stamp:
@@ -277,19 +281,16 @@ class DesktopBackend:
             return [i for i in range(100000) if (start is None or 100+i>=start) and (end is None or 100+i<=end)]
         return sorted(self.repo.indices_in_range(chat,start,end))
 
-    def search(self,query,chat=None):
-        if not isinstance(query,str) or not 1<=len(query)<=300:
+    def search(self,query,chat=None,mode="contains",sender=None,kind=None,start=None,end=None,offset=0):
+        if not isinstance(query,str) or len(query)>300 or not query and not any((sender,kind,start,end)):
             raise UserError("请输入搜索内容")
         if self.demo:
             return [dict(chat=self.infos[0].chat_id,index=42,name="绮录演示",text="找到演示消息",ts=100+42)]
-        from qqexport.search import SearchIndex, Query
-        index = SearchIndex()
-        try:
-            index.build(self.repo)
-            return [dict(chat=hit.chat_id,index=hit.position,
-                name=hit.sender,text=hit.summary,ts=hit.ts) for hit in index.find(Query(text=query,chat_id=chat),limit=100)]
-        finally:
-            index.close()
+        from qqexport.search import Query
+        index = self.tools.index()
+        return [dict(chat=hit.chat_id,index=hit.position,
+            name=hit.sender,text=hit.summary,ts=hit.ts) for hit in index.find(
+                Query(text=query,chat_id=chat,mode=mode,sender=sender,kind=kind,start=start,end=end),limit=100,offset=offset)]
 
     def _demo(self,uin="12345"):
         from PIL import Image,ImageDraw
@@ -323,11 +324,19 @@ class DesktopBackend:
 
     def dispatch(self,method,params):
         methods = {"boot":self.boot,"switch":self.switch,"refresh":self.refresh,"messages":self.messages,
-                   "media":self.media,"openMedia":self.open_media,"export":self.export,"search":self.search,"range":self.range}
+                   "media":self.media,"openMedia":self.open_media,"export":self.export,"search":self.search,"range":self.range,
+                   "tool":self.tools.call}
         if method not in methods or not isinstance(params,dict):
             raise UserError("不支持的操作")
         if method=="media":
             return self.media(**params)
+        if method=="tool" and params.get("action") in {"queueState","queueCancel"}:
+            return self.tools.call(**params)
+        if self.tools.busy:
+            if method=="refresh":
+                return None
+            if method in {"switch","boot"}:
+                raise UserError("任务正在运行，请等待或取消后切换账号")
         with self.lock:
             return methods[method](**params)
 
@@ -356,10 +365,16 @@ def main():
                 try:
                     request = json.loads(line)
                     if isinstance(request,dict):
-                        pool.submit(respond,request)
+                        if request.get("method")=="tool" and request.get("params",{}).get("action") in {"queueState","queueCancel"}:
+                            respond(request)
+                        else:
+                            pool.submit(respond,request)
                 except ValueError:
                     pass
     finally:
+        if backend.tools.busy:
+            backend.tools.call("queueCancel")
+            backend.tools.jobs[backend.tools.active]["thread"].join(timeout=4)
         backend.close()
 
 

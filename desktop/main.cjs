@@ -1,7 +1,6 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, session } = require('electron');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const { spawn } = require('node:child_process');
 const { CoreBridge } = require('./bridge.cjs');
 const NAME = '绮录QQ聊天记录导出软件';
 const ROOT = path.resolve(__dirname, '..');
@@ -75,13 +74,46 @@ app.whenReady().then(async () => {
     validate(event);
     return outputDirectory ? shell.openPath(outputDirectory) : null;
   });
-  ipcMain.handle('classic', event => {
+  ipcMain.handle('tool', async (event, params) => {
     validate(event);
-    const executable = app.isPackaged ? path.join(process.resourcesPath, 'core', 'qilu-core.exe') : DEVELOPMENT_PYTHON;
-    const child = spawn(executable, app.isPackaged ? ['--classic'] : ['-m', 'qqexport', 'gui'],
-      { cwd: app.isPackaged ? process.resourcesPath : ROOT, detached: true, windowsHide: true, stdio: 'ignore' });
-    child.on('error', () => dialog.showErrorBox('工具窗口未能打开', '请检查程序文件是否完整，重新安装后再试。'));
-    child.unref();
+    const actions = new Set(['batch','queueState','queueCancel','queueRetry','queueResume','archiveCreate',
+      'archiveOpen','archiveVerify','libraryImport','libraryAccounts','libraryOpen','libraryClear','cacheClear',
+      'missing','settingsGet','settingsSave','searchClear','searchHistory','searchExport','schedule']);
+    if (!params || !actions.has(params.action)) throw new Error('不支持的工具操作');
+    const safe = {...params}; delete safe.path; delete safe.out;
+    const action = safe.action;
+    const open = ['archiveOpen','archiveVerify','libraryImport','queueResume'].includes(action);
+    const save = ['archiveCreate','schedule'].includes(action);
+    if (open || save) {
+      const extension = action==='queueResume'?'json':action==='schedule'?'xml':'qqarchive';
+      const options = { title: {archiveOpen:'打开离线归档',archiveVerify:'校验归档',libraryImport:'导入归档到资料库',queueResume:'恢复导出队列',archiveCreate:'保存聊天归档',schedule:'保存任务计划'}[action],
+        filters:[{name:extension.toUpperCase(),extensions:[extension]}] };
+      const result = open ? await dialog.showOpenDialog(window,{...options,properties:['openFile']}) : await dialog.showSaveDialog(window,{...options,defaultPath:`绮录.${extension}`});
+      if (result.canceled) return { canceled:true };
+      safe.path = open ? result.filePaths[0] : result.filePath;
+    }
+    if (['batch','searchExport','schedule'].includes(action)) {
+      if (!outputDirectory) {
+        const result = await dialog.showOpenDialog(window,{title:'选择保存位置',properties:['openDirectory','createDirectory']});
+        if (result.canceled) return {canceled:true};
+        outputDirectory=result.filePaths[0];
+      }
+      safe.out=outputDirectory;
+    }
+    if (['libraryClear','cacheClear'].includes(action)) {
+      const result=await dialog.showMessageBox(window,{type:'question',buttons:['取消','确认清理'],defaultId:0,cancelId:0,
+        message:action==='libraryClear'?'清空本机资料库内所有明文消息及附件？归档和 QQ 原始数据保留。':'清理缩略图和系统查看器的图片副本？再次浏览时会重新生成。'});
+      if(result.response!==1)return {canceled:true};
+    }
+    if(action==='batch' && safe.rebuild){
+      const result=await dialog.showMessageBox(window,{type:'question',buttons:['取消','全量重建'],defaultId:0,cancelId:0,message:'将完整替换选中会话的已有增量备份，是否继续？'});
+      if(result.response!==1)return {canceled:true};
+    }
+    if(action==='settingsSave') {
+      delete safe.last_out;
+      if(outputDirectory)safe.last_out=outputDirectory;
+    }
+    return core.call('tool',safe);
   });
   ipcMain.on('window', (event, action) => {
     if (!senderAllowed(event)) return;

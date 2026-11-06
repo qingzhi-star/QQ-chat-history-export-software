@@ -65,3 +65,34 @@ def test_desktop_pipe_protocol_and_clean_exit(tmp_path,monkeypatch):
     rows = {row["id"]:row for line in result.stdout.splitlines() if (row:=json.loads(line))}
     assert rows[1]["result"]["chats"][0]["count"]==100000
     assert "error" in rows[2]
+
+
+def test_real_boot_discovery_signature_and_automatic_account_open(tmp_path,monkeypatch):
+    from qqexport.core import discover
+    from qqexport.account_panel import Identity
+    from qqexport.export.session import ExportSource
+    from qqexport.qq.contacts import Friend
+    monkeypatch.setenv("QQEXPORT_HOME",str(tmp_path/"home"))
+    src = source(tmp_path,count=5)
+    src.contacts.friends_by_uin["12345"] = Friend(uin="12345",nick="合成账号")
+    account = discover.QQAccount("12345",tmp_path,tmp_path/"nt_db",tmp_path/"nt_data")
+    calls = []
+    def find(explicit=None, *, scan_drives=False):
+        calls.append(explicit)
+        return [account]
+    # autospec 使用现有接口签名，避免用 **kwargs 掩盖参数名错误。
+    from unittest.mock import patch
+    with patch.object(discover,"discover_accounts",autospec=True,side_effect=find):
+        monkeypatch.setattr("qqexport.electron_backend.read_identity",lambda account:Identity(account.uin,"合成账号"))
+        monkeypatch.setattr("qqexport.electron_backend.account_key",lambda account,allow_scan=False:b"synthetic")
+        monkeypatch.setattr(ExportSource,"open",classmethod(lambda cls,account,key,**kwargs:src))
+        value = DesktopBackend()
+        try:
+            result = value.dispatch("boot",{})
+            assert calls==[None]
+            assert result["account"]["uin"]=="12345"
+            assert result["account"]["name"]=="合成账号"
+            assert result["chats"][0]["count"]==5
+            assert value.dispatch("messages",dict(chat=result["chats"][0]["id"]))["messages"]
+        finally:
+            value.close()

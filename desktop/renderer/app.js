@@ -1,4 +1,5 @@
 import { MessageList } from './virtual.js';
+import { initTools } from './tools.js';
 const $ = id => document.getElementById(id);
 const api = window.qilu;
 let state = null, current = null, selecting = false, allSelected = false;
@@ -26,6 +27,8 @@ function busy(value, text = '') {
   $('switch-account').disabled = value;
   $('reload').disabled = value;
   $('begin-select').disabled = value || !current;
+  for(const id of ['select-all','dates','cancel-select'])$(id).disabled=value;
+  $('next').disabled=value||selectionCount()===0;
   $('status').textContent = text;
 }
 function resource(token) {
@@ -69,7 +72,7 @@ function isSelected(index) { return allSelected ? !excluded.has(index) : selecte
 function updateSelection() {
   $('selection-count').textContent = `已选择 ${selectionCount().toLocaleString()} / ${(current?.count || 0).toLocaleString()} 条`;
   $('select-all').textContent = allSelected && !excluded.size ? '全不选' : '全选';
-  $('next').disabled = selectionCount() === 0;
+  $('next').disabled = loading || selectionCount() === 0;
   list.invalidate();
 }
 function toggleMessage(index) {
@@ -184,8 +187,10 @@ new ResizeObserver(scheduleChats).observe($('chats'));
 
 function applyState(next, { preserve = false } = {}) {
   if(state && next.generation<state.generation)return;
+  if(!preserve)exitSelection();
   const previous = current, anchor = list.anchor(), follow = list.follow;
   state = { ...state, ...next };
+  document.body.classList.toggle('compact',state.density==='compact');
   const account = state.account;
   $('account-name').textContent = account.name;
   $('account-uin').textContent = account.uin ? `QQ ${account.uin}` : '点击右侧切换账号';
@@ -273,21 +278,38 @@ $('do-export').addEventListener('click',()=>run(async()=>{
     $('export-progress').textContent=`已导出 ${result.messages} 条消息。${result.failed ? `${result.failed} 条失败。` : ''}${result.pdf_error || ''}`;
   } finally { $('do-export').disabled=false; $('cancel-export').disabled=false; }
 }));
-$('search').addEventListener('click',()=>{$('search-dialog').showModal();$('search-query').focus();});
+$('search').addEventListener('click',()=>{$('search-dialog').showModal();$('search-query').focus();run(async()=>{
+  const history=await api.tool({action:'searchHistory'});$('search-history').replaceChildren();
+  for(const value of history){const option=node('option');option.value=value;$('search-history').append(option);}
+  $('search-query').setAttribute('list','search-history');
+});});
 $('close-search').addEventListener('click',()=>$('search-dialog').close());
-async function search(){
-  const query=$('search-query').value.trim();if(!query)return;
+let searchOffset=0,lastQuery=null;
+async function search(offset=0){
+  const query=$('search-query').value.trim(),sender=$('search-sender').value.trim(),kind=$('search-kind').value;
+  if(!query&&!sender&&!kind&&!$('search-start').value&&!$('search-end').value)return;
+  searchOffset=offset;
+  const timestamp=(id,end=false)=>$(id).value?Math.floor(new Date(`${$(id).value}T${end?'23:59:59':'00:00:00'}`).getTime()/1000):null;
+  const params={query,chat:$('search-scope').value==='current'?current?.id||null:null,mode:$('search-mode').value,
+    sender:sender||null,kind:kind||null,start:timestamp('search-start'),end:timestamp('search-end',true),offset};
+  lastQuery={text:params.query,chat_id:params.chat,mode:params.mode,sender:params.sender,kind:params.kind,start:params.start,end:params.end};
   $('search-results').replaceChildren(node('p','muted','正在搜索本机记录…'));
-  const hits=await api.search({query,chat:current?.id || null});
+  const hits=await api.search(params);
+  if($('save-search-history').checked&&query)await api.tool({action:'searchHistory',text:query});
   $('search-results').replaceChildren();
   for(const hit of hits){const item=node('button','search-hit',`${hit.name} · ${fullTime(hit.ts)}\n${hit.text}`);item.addEventListener('click',()=>run(async()=>{await openChat(state.chats.find(chat=>chat.id===hit.chat));list.see(hit.index);$('search-dialog').close();}));$('search-results').append(item);}
+  $('search-previous').disabled=offset===0;$('search-next').disabled=hits.length<100;
   if(!hits.length)$('search-results').append(node('p','muted','没有找到匹配的消息'));
 }
-$('run-search').addEventListener('click',()=>run(search));
-$('search-query').addEventListener('keydown',event=>{if(event.key==='Enter')run(search);});
+$('run-search').addEventListener('click',()=>run(()=>search(0)));
+$('search-query').addEventListener('keydown',event=>{if(event.key==='Enter')run(()=>search(0));});
+$('search-previous').addEventListener('click',()=>run(()=>search(Math.max(0,searchOffset-100))));
+$('search-next').addEventListener('click',()=>run(()=>search(searchOffset+100)));
+$('clear-search').addEventListener('click',()=>run(async()=>{await api.tool({action:'searchClear'});await api.tool({action:'searchHistory',clear:true});$('search-results').replaceChildren();$('search-history').replaceChildren();$('search-query').value='';lastQuery=null;}));
+$('export-search').addEventListener('click',()=>{if(lastQuery)tools.exportSearch(lastQuery);else toast('请先搜索，再导出匹配结果');});
 $('more').addEventListener('click',()=>$('more-dialog').showModal());
 $('close-more').addEventListener('click',()=>$('more-dialog').close());
-$('classic').addEventListener('click',()=>run(()=>api.classic()));
+
 $('open-output').addEventListener('click',()=>run(()=>api.openOutput()));
 for(const button of document.querySelectorAll('[data-window]'))button.addEventListener('click',()=>api.window(button.dataset.window));
 document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!document.querySelector('dialog[open]'))exitSelection();if(event.ctrlKey&&event.key==='f'){event.preventDefault();$('search').click();}});
@@ -296,4 +318,6 @@ setInterval(()=>run(async()=>{
   refreshing=true;
   try {const result=await api.refresh();if(result)applyState(result,{preserve:true});}finally{refreshing=false;}
 }),2000);
+const tools=initTools({api,getState:()=>state,getCurrent:()=>current,applyState,onError:toast,setBusy:busy,
+  clearResources:()=>{resourceCache.clear();list.invalidate();},refreshMessages:preferences=>{formats.clear();for(const format of preferences?.formats||state?.formats||['html'])formats.add(format);list.invalidate();},see:index=>list.see(index)});
 run(boot);

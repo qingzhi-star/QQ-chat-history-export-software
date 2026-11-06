@@ -36,8 +36,30 @@
     <p id="export-progress" role="status"></p>
   </dialog>
   <dialog id="date-dialog"><h2>选择这段时光</h2><p class="muted">选择日期范围内的聊天记录</p><div class="date-fields"><label>开始日期<input id="date-start" type="date"></label><span>—</span><label>结束日期<input id="date-end" type="date"></label></div><div class="dialog-actions"><button id="cancel-dates">取消</button><button id="apply-dates" class="primary">应用范围</button></div></dialog>
-  <dialog id="search-dialog"><h2>搜索聊天记录</h2><div class="search-form"><input id="search-query" placeholder="在当前会话中搜索…" maxlength="300"><button id="run-search" class="primary">搜索</button></div><div id="search-results"></div><div class="dialog-actions"><button id="close-search">关闭</button></div></dialog>
-  <dialog id="more-dialog"><h2>更多功能</h2><p class="muted">搜索、批量导出、增量备份、归档与资料库等完整工具继续可用。</p><button id="classic" class="wide">打开经典工具窗口</button><button id="open-output" class="wide">打开本次导出文件夹</button><div class="dialog-actions"><span id="version" class="muted"></span><button id="close-more">关闭</button></div></dialog>
+  <dialog id="search-dialog"><h2>搜索聊天记录</h2><div class="search-form"><input id="search-query" placeholder="输入内容或组合筛选…" maxlength="300"><button id="run-search" class="primary">搜索</button></div>
+    <div class="search-filters"><select id="search-scope"><option value="current">当前会话</option><option value="all">全部会话</option></select><select id="search-mode"><option value="contains">包含文字</option><option value="exact">整条精确匹配</option><option value="regex">正则表达式</option></select><select id="search-kind"><option value="">全部类型</option><option value="text">文字</option><option value="image">图片</option><option value="file">文件</option><option value="voice">语音</option><option value="reply">引用</option><option value="recall">撤回</option><option value="forward_nt">合并转发</option><option value="ark">卡片</option></select><input id="search-sender" placeholder="发送者 / UID / QQ 号"><input id="search-start" type="date" aria-label="搜索开始日期"><input id="search-end" type="date" aria-label="搜索结束日期"></div>
+    <datalist id="search-history"></datalist><label class="muted"><input type="checkbox" id="save-search-history"> 保存搜索关键词到本机</label>
+    <div id="search-results"></div><div class="search-pages"><button id="search-previous">上一页</button><button id="search-next">下一页</button><button id="export-search">导出全部匹配结果</button><button id="clear-search">清除索引和历史</button></div><div class="dialog-actions"><span class="muted">搜索索引仅在内存中</span><button id="close-search">关闭</button></div></dialog>
+  <dialog id="more-dialog"><h2>更多功能</h2><div class="tool-grid">
+    <button data-tool="search">搜索聊天记录<small>全库、发送者、类型、日期筛选</small></button>
+    <button data-tool="batch">批量导出<small>多会话、导出清单、可恢复队列</small></button>
+    <button data-tool="incremental">增量备份<small>追加新消息或全量重建</small></button>
+    <button data-tool="queueResume">恢复导出队列<small>校验已有产物并继续</small></button>
+    <button data-tool="queueState">任务进度<small>查看、取消、重试任务</small></button>
+    <button data-tool="archiveCreate">导出聊天归档<small>可选密码加密，附带媒体校验</small></button>
+    <button data-tool="archiveOpen">打开离线归档<small>本窗口浏览和导出</small></button>
+    <button data-tool="archiveVerify">校验归档<small>校验内容和媒体完整性</small></button>
+    <button data-tool="libraryImport">归档导入资料库<small>按账号合并并去重</small></button>
+    <button data-tool="libraryOpen">打开本机资料库<small>选择已导入账号浏览</small></button>
+    <button data-tool="missing">本机缺失媒体<small>查看并跳转对应消息</small></button>
+    <button data-tool="cacheClear">清理图片缓存<small>缩略图与系统查看器副本</small></button>
+    <button data-tool="settings">软件设置<small>默认格式、保存位置、消息密度</small></button>
+    <button data-tool="schedule">生成每日导出计划<small>生成 XML 和 JSON，默认禁用</small></button>
+    <button data-tool="libraryClear">清空本机资料库<small>归档文件和 QQ 数据保留</small></button>
+    <button id="open-output">打开导出文件夹<small>查看本次保存的文件</small></button>
+    </div><div class="dialog-actions"><span id="version" class="muted"></span><button id="close-more">关闭</button></div></dialog>
+  <dialog id="tool-dialog"><h2 id="tool-title"></h2><div id="tool-body"></div><p id="tool-message" role="status"></p><div id="tool-actions" class="dialog-actions"></div></dialog>
+  <dialog id="job-dialog"><h2 id="job-title">任务进度</h2><div id="job-progress"></div><p id="job-message" role="status"></p><div class="dialog-actions"><button id="job-cancel">取消任务</button><button id="job-retry">重试失败 / 继续</button><button id="job-close">关闭</button></div></dialog>
   <script type="module" src="app.js"></script>
 </body>
 </html>

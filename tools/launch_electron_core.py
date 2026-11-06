@@ -3,14 +3,10 @@ import sys
 from qqexport.temporary import cleanup_stale
 
 if __name__=="__main__":
-    if "--classic" in sys.argv:
-        from qqexport.tk_runtime import create_root,prepare_frozen
-        prepare_frozen()
-        from qqexport.product_gui import ProductApp
-        root = create_root()
-        app = ProductApp(root)
-        root.mainloop()
-    else:
-        cleanup_stale()
-        from qqexport.electron_backend import main
-        main()
+    if len(sys.argv)==3 and sys.argv[1]=="--scheduled-export":
+        from pathlib import Path
+        from qqexport.scheduled import run
+        raise SystemExit(run(Path(sys.argv[2])))
+    cleanup_stale()
+    from qqexport.electron_backend import main
+    main()
