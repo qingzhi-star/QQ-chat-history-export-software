@@ -8,8 +8,10 @@ import shutil
 import sys
 import time
 import zipfile
+import platform
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0,str(ROOT))
 NAME = "绮录QQ聊天记录导出软件.exe"
 
 
@@ -17,6 +19,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("distribution",type=Path)
     parser.add_argument("--work",type=Path,required=True,help="干净的标准用户测试目录")
+    parser.add_argument("--report",type=Path,default=ROOT/"build/electron-distribution-smoke.json")
     args = parser.parse_args()
     distribution,work = args.distribution.resolve(),args.work.resolve()
     if work.exists():
@@ -41,7 +44,12 @@ def main():
     assert (portable/"resources/core/qilu-core.exe").is_file()
     env = dict(os.environ,QILU_PACKAGED_EXE=str(executable),QILU_PYTHON=sys.executable)
     subprocess.run(["npm.cmd","run","test:ui"],cwd=ROOT/"desktop",env=env,check=True)
-    report = dict(version=manifest["version"],source_commit=manifest["source_commit"],portable=True)
+    gui = json.loads((ROOT/"build/electron-packaged-smoke.json").read_text(encoding="utf-8"))
+    report = dict(version=manifest["version"],source_commit=manifest["source_commit"],portable=True,
+        build_manifest_sha256=hashlib.file_digest((distribution/"electron-build.json").open("rb"),"sha256").hexdigest(),
+        platform=dict(system=platform.system(),release=platform.release(),machine=platform.machine()),portable_gui=gui)
+    from tools.verify_electron_core import verify
+    report["frozen_pipeline"] = verify(executable,work/"frozen-pipeline")
     if os.name=="nt":
         import winreg
         registry = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\qingzhi-star.Qilu.Desktop_is1"
@@ -67,6 +75,7 @@ def main():
         sentinel.write_text("synthetic settings",encoding="utf-8")
         launch_env = dict(env,QILU_PACKAGED_EXE=str(installed/NAME))
         subprocess.run(["npm.cmd","run","test:ui"],cwd=ROOT/"desktop",env=launch_env,check=True)
+        report["installed_gui"] = json.loads((ROOT/"build/electron-packaged-smoke.json").read_text(encoding="utf-8"))
         subprocess.run([str(uninstall),"/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART"],check=True,timeout=120)
         deadline = time.monotonic()+30
         while (installed/NAME).exists() and time.monotonic()<deadline:
@@ -79,8 +88,14 @@ def main():
         except FileNotFoundError:
             pass
         report.update(install=True,launch=True,uninstall=True)
+    report["checks"] = dict(portable_unicode_spaces=report["portable"],install_launch=report.get("install") and report.get("launch"),
+        uninstall_clean=report.get("uninstall"),without_system_runtime=gui.get("systemRuntimeRemoved") is True,
+        gui_regression=gui.get("pass") is True and report.get("installed_gui",{}).get("pass") is True,
+        real_pdf=report["frozen_pipeline"]["real_pdf"],source_readonly=report["frozen_pipeline"]["source_readonly"],
+        frozen_pipeline=all(report["frozen_pipeline"].get(key) is True for key in ("archive_decrypt","search","txt_html_export","without_system_runtime")))
     report["pass"] = True
-    (ROOT/"build/electron-distribution-smoke.json").write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding="utf-8")
+    args.report.parent.mkdir(parents=True,exist_ok=True)
+    args.report.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding="utf-8")
     print(json.dumps(report,ensure_ascii=False))
 
 

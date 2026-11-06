@@ -42,6 +42,7 @@ class DesktopTools:
         backend = self.backend
         backend.close()
         backend.source,backend.repo = source,ArchiveRepository(source)
+        backend.demo = False
         backend.account = None
         backend.infos = source.chats()
         backend.metas = {}

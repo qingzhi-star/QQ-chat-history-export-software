@@ -4,7 +4,7 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 permissions:
-  contents: write
+  contents: read
 jobs:
   test:
     runs-on: windows-latest
@@ -20,7 +20,7 @@ jobs:
       - run: python -m pip install -e ".[dev]"
       - run: python -m pytest -q
       - run: python tools/check_privacy.py --audit
-  build:
+  desktop:
     needs: test
     runs-on: windows-latest
     steps:
@@ -28,32 +28,22 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version-file: .python-version
-      - name: Install pinned Inno Setup
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: python -m pip install -e ".[dev]"
+      - name: Verify source and release tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: python tools/release_electron.py --check-source --tag $env:GITHUB_REF_NAME
+      - run: npm.cmd --prefix desktop ci --no-fund
+      - run: npm.cmd --prefix desktop test
+      - run: npm.cmd --prefix desktop run test:ui
+      - name: Verify native Electron PDF
         shell: pwsh
         run: |
-          $cfg = Get-Content build-toolchain.json | ConvertFrom-Json
-          $installer = Join-Path $env:RUNNER_TEMP 'inno-setup.exe'
-          Invoke-WebRequest $cfg.inno_installer_url -OutFile $installer
-          if ((Get-FileHash $installer -Algorithm SHA256).Hash.ToLower() -ne $cfg.inno_installer_sha256) { throw 'Inno installer checksum mismatch' }
-          $dest = Join-Path $env:RUNNER_TEMP 'inno'
-          $proc = Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/DIR=$dest") -WindowStyle Hidden -Wait -PassThru
-          if ($proc.ExitCode -ne 0) { throw 'Inno install failed' }
-      - name: Build locked distribution
-        run: python tools/build_release.py --out dist/release --iscc "$env:RUNNER_TEMP/inno/ISCC.exe"
-      - name: Smoke test
-        run: python tools/smoke_release.py dist/release --iscc "$env:RUNNER_TEMP/inno/ISCC.exe" --report build/smoke-report.json
-      - name: Release gate
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          RELEASE_EVIDENCE_JSON: ${{ vars.RELEASE_EVIDENCE_JSON }}
-        run: python tools/release_gate.py dist/release --smoke build/smoke-report.json --tag $env:GITHUB_REF_NAME
-      - name: Publish exactly two assets
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $manifest = Get-Content dist/release/build-manifest.json | ConvertFrom-Json
-          $assets = $manifest.artifacts | ForEach-Object { Join-Path 'dist/release' $_.path }
-          $flags = @()
-          if ($manifest.version -match 'rc[0-9]+$') { $flags += '--prerelease' }
-          gh release create $env:GITHUB_REF_NAME @assets @flags --title $manifest.release_title --notes-file dist/release/release-notes.md --verify-tag
+          $env:QILU_ELECTRON_RUNTIME = node -p "require('./desktop/node_modules/electron')"
+          python -c "import os; from pathlib import Path; from tools.verify_electron_core import verify; print(verify(Path(os.environ['QILU_ELECTRON_RUNTIME']), Path(os.environ['RUNNER_TEMP'])/'qilu-pdf-check'))"
+      # Release assets are built and accepted on Windows 11, then published from
+      # that exact manifest. CI must not replace them with an unaccepted rebuild.

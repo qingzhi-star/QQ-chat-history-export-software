@@ -1,5 +1,29 @@
 # 发布验收清单
 
+## Electron 0.3.0 正式发行
+
+本轮按用户要求发布正式版，已验证支持范围为 **Windows 11 x64**。
+Windows 10、其他架构及目标四核机不冒充 PASS，也不列入本轮已验证范围。
+旧 Tk 发布清单保留在下方，不能把旧 Tk 安装包当作 Electron 正式版上传。
+
+1. `pyproject.toml` 是版本来源；npm 映射、PE 版本、README、标签和资产名一致。
+2. 干净提交上运行完整测试、隐私检查、Python 3.12/3.13/3.14 和 Electron CI。
+3. `tools/build_electron.py` 使用锁定 Python/Node 依赖和 Inno Setup，输出新目录，
+   记录同提交源码指纹、依赖哈希、完整 exe/DLL/resources 目录和两个分发资产。
+4. `tools/smoke_electron.py` 在 Windows 11 对该产物验证中文/空格路径、真实安装、
+   启动、卸载、无系统 Python/Node、内置工具、加密归档、搜索及内置 PDF（含图片）。
+   合成源数据库、附件和归档前后字节不变；报告绑定当前 electron-build.json 哈希。
+5. `tools/release_electron.py` 校验同提交、同构建、所有检查为 True；正式版还需
+   Windows 11 x64 平台证据与双栏十万条消息/200 会话滚动 p95 ≤1000/55 ms。
+   这是本机合成采样，不扩展成所有设备帧率、冷图片或旧性能表的预算保证。
+6. 推送 `v0.3.0` 标签并等待标签工作流通过。该工作流验证 Electron 源码和内置 PDF，
+   不自动重建并替换已经过 Windows 11 验收的本机资产。
+7. 先创建 GitHub Release 草稿，仅上传同版本安装器和便携 ZIP，核对远端 SHA-256、
+   标签与提交后发布。正式版不带 prerelease，标记 Latest；从不覆盖已有标签或资产。
+   清单/校验值放发布说明，源码包由 GitHub 自动提供。
+
+## 历史 Tk 发布门（0.1 / 0.2）
+
 1. 每个任务已独立提交并推送，工作区干净；普通测试和两种隐私巡检通过。
 2. 仅修改 `pyproject.toml` 版本并 `--sync-version`，标签为 `v<完全相同版本>`。
 3. 使用固定工具链全新构建；保留 build-manifest.json 和 SHA256SUMS。

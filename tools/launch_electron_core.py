@@ -1,4 +1,4 @@
-"""冻结后的管道内核入口；--classic 兼容已有完整 P2 工具。"""
+"""冻结后的管道内核和显式计划导出入口。"""
 import sys
 from qqexport.temporary import cleanup_stale
 

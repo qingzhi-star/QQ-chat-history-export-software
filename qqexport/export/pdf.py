@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from qqexport.export.cancel import check_cancel
 
+desktop_printer = None
+
 _EDGE_CANDIDATES = (
     Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"),
     Path(r"C:\Program Files\Microsoft\Edge\Application\msedge.exe"),
@@ -37,6 +39,8 @@ def find_edge(candidates: tuple[Path, ...] | list[Path] | None = None) -> Path |
 def write_pdf(html_path: Path, out_pdf: Path, *, timeout: int = 600,
               edge: Path | None = None, cancel=None) -> PdfResult:
     check_cancel(cancel)
+    if desktop_printer is not None:
+        return desktop_printer.render(html_path,out_pdf,timeout=timeout,cancel=cancel)
     exe = edge or find_edge()
     if exe is None:
         return PdfResult(None, "未找到 Microsoft Edge，请改用 --format html")

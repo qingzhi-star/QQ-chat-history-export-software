@@ -6,4 +6,6 @@ module.exports = async context => {
   const expected = path.join(context.appOutDir,`${context.packager.appInfo.productFilename}_wer.dll`);
   try { await fs.rename(oldName,expected); }
   catch (error) { if (error.code!=='ENOENT') throw error; }
+  const root=path.resolve(__dirname,'..');
+  for(const name of ['LICENSE','NOTICE'])await fs.copyFile(path.join(root,name),path.join(context.appOutDir,name));
 };

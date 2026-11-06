@@ -5,11 +5,18 @@ class CoreBridge {
   constructor(command, args, options = {}) {
     this.pending = new Map();
     this.sequence = 0;
-    this.child = spawn(command, args, { ...options, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    const { printPdf, cancelPdf, ...spawnOptions } = options;
+    this.child = spawn(command, args, { ...spawnOptions, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     this.lines = readline.createInterface({ input: this.child.stdout });
     this.lines.on('line', line => {
       let result;
       try { result = JSON.parse(line); } catch { return; }
+      if (result.event === 'printPdf') {
+        Promise.resolve().then(() => printPdf(result)).then(
+          () => this.pdfResult(result.id,true), () => this.pdfResult(result.id,false));
+        return;
+      }
+      if (result.event === 'cancelPdf') { cancelPdf?.(result.id); return; }
       const request = this.pending.get(result.id);
       if (!request) return;
       clearTimeout(request.timeout);
@@ -21,6 +28,9 @@ class CoreBridge {
     this.child.on('error', error => this.fail(error));
     this.child.on('exit', () => this.fail(new Error('本机内核已退出，请重新打开软件')));
     this.child.stdin.on('error', error => this.fail(error));
+  }
+  pdfResult(id,ok) {
+    if (!this.child.stdin.destroyed && !this.child.stdin.writableEnded) this.child.stdin.write(JSON.stringify({event:'pdfResult',id,ok})+'\n','utf8');
   }
   call(method, params = {}) {
     return new Promise((resolve, reject) => {

@@ -347,6 +347,15 @@ def main():
             stream.reconfigure(encoding="utf-8",errors="replace")
     backend = DesktopBackend(demo=os.environ.get("QILU_DEMO")=="1")
     write_lock = threading.Lock()
+    def send(message):
+        with write_lock:
+            sys.stdout.write(json.dumps(message,ensure_ascii=False,separators=(",",":"))+"\n")
+            sys.stdout.flush()
+    from qqexport.electron_pdf import PdfBridge
+    from qqexport.export import pdf
+    printer = PdfBridge(send)
+    if os.environ.get("QILU_ELECTRON_PDF")=="1":
+        pdf.desktop_printer = printer
     def respond(request):
         try:
             value = backend.dispatch(request.get("method"),request.get("params",{}))
@@ -354,9 +363,7 @@ def main():
         except Exception as exc:
             text = exc.user_message if isinstance(exc,AccountAccessError) else str(exc) if isinstance(exc,(UserError,discover.DiscoveryError,config.ConfigError)) else f"操作失败：{type(exc).__name__}"
             response = dict(id=request.get("id"),error=text)
-        with write_lock:
-            sys.stdout.write(json.dumps(response,ensure_ascii=False,separators=(",",":"))+"\n")
-            sys.stdout.flush()
+        send(response)
     try:
         with ThreadPoolExecutor(max_workers=4,thread_name_prefix="qilu") as pool:
             for line in sys.stdin:
@@ -365,6 +372,9 @@ def main():
                 try:
                     request = json.loads(line)
                     if isinstance(request,dict):
+                        if request.get("event")=="pdfResult":
+                            printer.complete(request)
+                            continue
                         if request.get("method")=="tool" and request.get("params",{}).get("action") in {"queueState","queueCancel"}:
                             respond(request)
                         else:

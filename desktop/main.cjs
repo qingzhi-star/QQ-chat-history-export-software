@@ -2,10 +2,12 @@ const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, session } = r
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { CoreBridge } = require('./bridge.cjs');
+const { PdfPrinter } = require('./pdf.cjs');
 const NAME = '绮录QQ聊天记录导出软件';
 const ROOT = path.resolve(__dirname, '..');
 const DEVELOPMENT_PYTHON = process.env.QILU_PYTHON || 'python';
 let window, core, outputDirectory, quitting = false;
+const printer = new PdfPrinter();
 const allowed = new Set(['boot', 'switch', 'refresh', 'messages', 'media', 'openMedia', 'search', 'range']);
 protocol.registerSchemesAsPrivileged([{ scheme: 'qilu', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 app.setName(NAME);
@@ -24,7 +26,8 @@ function launchCore() {
   const executable = app.isPackaged ? path.join(process.resourcesPath, 'core', 'qilu-core.exe') : DEVELOPMENT_PYTHON;
   const args = app.isPackaged ? [] : ['-m', 'qqexport.electron_backend'];
   return new CoreBridge(executable, args, { cwd: app.isPackaged ? process.resourcesPath : ROOT,
-    env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' } });
+    env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1',QILU_ELECTRON_PDF:'1' },
+    printPdf: request=>printer.print(request),cancelPdf:id=>printer.cancel(id) });
 }
 app.whenReady().then(async () => {
   protocol.handle('qilu', request => {
@@ -128,5 +131,6 @@ app.on('before-quit', event => {
   if (quitting || !core) return;
   event.preventDefault();
   quitting = true;
+  printer.close();
   core.close().finally(() => app.quit());
 });

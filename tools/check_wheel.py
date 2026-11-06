@@ -29,6 +29,7 @@ REQUIRED = (
     "qqexport/product_gui.py",
     "qqexport/canvas_row.py",
     "qqexport/electron_backend.py",
+    "qqexport/electron_pdf.py",
     "qqexport/desktop_tools.py",
     "qqexport/repository.py",
     "qqexport/virtual_list.py",
