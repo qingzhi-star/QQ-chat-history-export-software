@@ -107,6 +107,15 @@ def test_product_paging_selection_dates_and_chat_switch(tmp_path,monkeypatch):
         app._start_preview(info)
         wait(lambda: not app._busy and bool(app.virtual.pages))
         assert app.current_chat_id == "c2c:u_a"
+        assert not root.cget("menu")
+        assert app.export_btn.cget("text")=="导出…"
+        assert app.next_btn.cget("text")=="下一步"
+        completed = []
+        monkeypatch.setattr(app,"_export_done",lambda report,output:completed.append(report))
+        app._export_selected(app.session,info,{1,2},None,None,{"txt"},tmp_path/"classic-export")
+        wait(lambda:bool(completed))
+        assert completed[0].messages_total==2
+        assert not any(isinstance(child,tk.Toplevel) for child in root.winfo_children())
         app._show_search()
         dialog = app._search_dialog
         dialog.text.set("synthetic 50")
@@ -149,3 +158,58 @@ def test_product_paging_selection_dates_and_chat_switch(tmp_path,monkeypatch):
         assert app.thumbnail_limit==16*1024**2
     finally:
         app.close()
+
+
+def test_classic_rendering_assets_and_last_line_are_visible(tmp_path):
+    import base64,io
+    from datetime import datetime
+    from PIL import Image
+    from qqexport.export.model import MediaRef
+    from qqexport.classic_row import media_key
+    stream = io.BytesIO()
+    Image.new("RGB",(34,34),"blue").save(stream,format="PNG")
+    avatar = "data:image/png;base64,"+base64.b64encode(stream.getvalue()).decode()
+    picture,second = tmp_path/"synthetic.png",tmp_path/"synthetic2.png"
+    Image.new("RGB",(120,65),"blue").save(picture)
+    Image.new("RGB",(80,55),"green").save(second)
+    message = Message(1,int(datetime(2026,11,6,9).timestamp()),"u_synthetic",None,"合成",True,[
+        Segment("image",media=MediaRef("image",source=picture,missing=False)),
+        Segment("image",media=MediaRef("image",source=second,missing=False)),
+        Segment("text",text="末尾文本用于校验未裁切")],avatar_data=avatar)
+    root = create_root()
+    root.geometry("800x600")
+    view = None
+    def request(offset,size):
+        view.loaded(offset,[(0,message)] if offset==0 else [])
+    def image_load(index,media):
+        with Image.open(media.source) as image:
+            copied = image.copy()
+        root.after_idle(lambda:view.image_ready(index,copied,media_key(media)))
+    try:
+        view = VirtualMessages(root,request,lambda index:None,image_loader=image_load)
+        view.pack(fill="both",expand=True)
+        view.reset(1)
+        for _ in range(4):
+            root.update()
+        row = view.rows[0][0]
+        assert row.normal.tag_cget("bubble_self","background")=="#95ec69"
+        assert row.normal.tag_cget("bubble","background")=="#ffffff"
+        assert row.normal.tag_cget("name_self","justify")=="right"
+        assert len(row.photos)==2
+        last = row.normal.search("末尾文本","1.0")
+        box = row.normal.dlineinfo(last)
+        assert box and box[1]+box[3]<=row.normal.winfo_height()
+        assert row.normal.get("1.0","end").count("2026-11-06")==1
+        anchor = view.anchor()
+        view.selection(True,{0})
+        root.update()
+        selection = row.renderer.sel_rows[0]
+        assert selection["bg"][0].cget("bg")=="#e6f0ff"
+        assert len(row.renderer._sel_photos)==2
+        assert not row.normal.winfo_ismapped()
+        assert selection["bg"][4].cget("text")=="合成  09:00:00"
+        view.selection(False,set())
+        root.update()
+        assert row.normal.winfo_ismapped() and view.anchor()[0]==anchor[0]
+    finally:
+        root.destroy()

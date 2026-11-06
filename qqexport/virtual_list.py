@@ -6,7 +6,7 @@ from datetime import datetime
 import tkinter as tk
 from tkinter import ttk
 
-from qqexport.export.txt import segment_text
+from qqexport.classic_row import MessageRow, media_key
 
 
 class HeightIndex:
@@ -24,6 +24,8 @@ class HeightIndex:
     def set(self, index, height):
         height = max(30, int(height))
         delta = height - self.values[index]
+        if not delta:
+            return
         self.values[index] = height
         pos = index + 1
         while pos <= self.count:
@@ -41,108 +43,6 @@ class HeightIndex:
             else:
                 high = mid - 1
         return min(low, self.count-1)
-
-
-class MessageRow(tk.Frame):
-    def __init__(self, parent, view):
-        super().__init__(parent, bg="white")
-        self.view, self.index, self.message, self.photo = view, -1, None, None
-        self.check = tk.Canvas(self, width=24, height=26, highlightthickness=0)
-        self.check.pack(side="left", anchor="n", pady=5)
-        self.avatar = tk.Label(self, width=3, text="●", fg="#5b8ff9", font=("Segoe UI", 18))
-        self.avatar.pack(side="left", anchor="n", padx=(2,6))
-        self.content = tk.Frame(self)
-        self.content.pack(side="left", fill="x", expand=True, padx=(2,8), pady=3)
-        self.head = tk.Label(self.content, anchor="w", fg="#777", font=("Microsoft YaHei UI", 9))
-        self.head.pack(fill="x")
-        self.body = tk.Label(self.content, justify="left", anchor="w", font=("Microsoft YaHei UI", 10))
-        self.body.pack(fill="x")
-        self.image = tk.Label(self.content, anchor="w")
-        self.image.pack(anchor="w")
-        for widget in (self, self.check, self.avatar, self.content, self.head, self.body, self.image):
-            widget.bind("<Button-1>", self.click)
-            widget.bind("<Double-Button-1>", self.open)
-            widget.bind("<MouseWheel>", view.wheel)
-            widget.bind("<Button-3>", self.menu)
-
-    def show(self, index, message, width):
-        density = getattr(self.view,"density","normal")
-        state = (index,id(message),width,self.view.selecting,index in self.view.selected,
-                 self.view.highlight==index,density)
-        if getattr(self,"_state",None)==state:
-            return False
-        self._state = state
-        if getattr(self,"_density",None)!=density:
-            self._density = density
-            self.body.configure(font=("Microsoft YaHei UI",9 if density=="compact" else 10))
-        changed = self.index != index or self.message is not message
-        self.index, self.message = index, message
-        if changed:
-            self.photo = None
-            self.image.configure(image="", text="")
-        if message is None:
-            self.head.configure(text="")
-            self.body.configure(text="正在加载…")
-        else:
-            stamp = datetime.fromtimestamp(message.ts).strftime("%Y-%m-%d %H:%M:%S")
-            self.head.configure(text=f"{message.sender_name}  {stamp}")
-            self.avatar.configure(text=(message.sender_name or "?")[:1])
-            text = "\n".join(segment_text(s) for s in message.segments)
-            if len(text)>8000:
-                text = text[:8000]+"\n…（预览省略，复制或导出包含全文）"
-            if message.is_recall:
-                text = "── 撤回了一条消息 ──"
-            self.body.configure(text=text, anchor="e" if message.is_self else "w",
-                                justify="right" if message.is_self else "left")
-            self.body.configure(fg="#999" if message.is_recall else "#222")
-            if message.is_recall:
-                self.head.configure(text="")
-                self.avatar.configure(text="")
-                self.body.configure(anchor="center")
-            if changed and self.view.image_loader:
-                for seg in message.segments:
-                    if seg.kind == "image" and seg.media is not None:
-                        self.view.image_loader(index, seg.media)
-                        break
-        self.body.configure(wraplength=max(100, width-100))
-        selected = self.view.selecting and index in self.view.selected
-        bg = "#e6f0ff" if selected else "#ffffff"
-        for widget in (self, self.check, self.avatar, self.content, self.head, self.body, self.image):
-            widget.configure(bg=bg)
-        if message is not None and not message.is_recall and not selected:
-            self.body.configure(bg="#eaf1ff" if message.is_self else "#f3f3f3", padx=6, pady=4)
-            self.avatar.pack_configure(side="right" if message.is_self else "left")
-            self.head.configure(anchor="e" if message.is_self else "w")
-        self.check.delete("all")
-        if self.view.selecting:
-            self.check.create_oval(3,3,19,19,outline="#888",fill="#888" if selected else bg)
-            if selected:
-                self.check.create_line(6,10,10,14,16,6,fill="white",width=2)
-        if self.view.highlight == index:
-            self.body.configure(bg="#fff2ae")
-        return True
-
-    def click(self, _):
-        if self.view.selecting and self.message is not None:
-            self.view.on_toggle(self.index)
-
-    def open(self, _):
-        if not self.view.selecting and self.message is not None and self.view.on_open:
-            for seg in self.message.segments:
-                if seg.media:
-                    self.view.on_open(seg.media)
-                    break
-
-    def menu(self, event):
-        if self.message is None:
-            return
-        menu = tk.Menu(self, tearoff=False)
-        def copy():
-            self.clipboard_clear()
-            self.clipboard_append("\n".join(segment_text(s) for s in self.message.segments))
-        menu.add_command(label="复制消息", command=copy)
-        menu.add_command(label="打开本机附件", command=lambda: self.open(None))
-        menu.tk_popup(event.x_root, event.y_root)
 
 
 class VirtualMessages(ttk.Frame):
@@ -219,6 +119,8 @@ class VirtualMessages(ttk.Frame):
 
     def selection(self, enabled, selected):
         self.selecting, self.selected = enabled, selected
+        self.canvas.configure(highlightthickness=0 if enabled else 1)
+        self.canvas.configure(yscrollincrement=0 if enabled else 24)
         self.schedule()
 
     def scroll(self, *args):
@@ -285,7 +187,7 @@ class VirtualMessages(ttk.Frame):
             return
         self.update_idletasks()
         for index,(row,item) in self.rows.items():
-            self.heights.set(index,row.winfo_reqheight()+3)
+            self.heights.set(index,row.measure_height())
         total = self.heights.prefix(self.count)
         self.canvas.configure(scrollregion=(0,0,width,total))
         for index,(row,item) in self.rows.items():
@@ -299,12 +201,14 @@ class VirtualMessages(ttk.Frame):
         if wanted!=set(range(next_first,next_last)):
             self._needs_redraw = True
 
-    def image_ready(self, index, image):
+    def image_ready(self, index, image, key=None):
         if index not in self.rows or image is None:
             return
-        from PIL import ImageTk
         row,_ = self.rows[index]
-        row.photo = ImageTk.PhotoImage(image)
-        row.image.configure(image=row.photo)
+        if key is not None and key not in row.requested:
+            return
+        if key is None:
+            key = next(iter(row.requested),None)
+        row.image_ready(key,image)
         self._geometry_dirty = True
         self.schedule()

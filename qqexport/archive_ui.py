@@ -89,7 +89,7 @@ def open_archive(app):
 
 
 def import_library(app):
-    if not messagebox.askyesno("本机明文资料库","导入后会在本机长期保存消息及附件的明文副本，即使原归档已加密。可通过工具菜单清空。继续？",parent=app.root):
+    if not messagebox.askyesno("本机明文资料库","导入后会在本机长期保存消息及附件的明文副本，即使原归档已加密。可右击导出按钮，在更多功能中清空。继续？",parent=app.root):
         return
     path = filedialog.askopenfilename(parent=app.root,title="导入归档",filetypes=[("QQ 归档","*.qqarchive")])
     if not path:

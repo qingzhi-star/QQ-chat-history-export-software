@@ -44,10 +44,14 @@ class ProductApp(App):
 
     def _build(self):
         super()._build()
+        preview_width = self.text.winfo_reqwidth()+self.tsb.winfo_reqwidth()
+        preview_height = self.text.winfo_reqheight()
         self.text.pack_forget()
         self.tsb.pack_forget()
         self.virtual = VirtualMessages(self.text.master, self._request_page, self._toggle_check,
                                        on_open=self._view_media, image_loader=self._load_image)
+        self.virtual.configure(width=preview_width,height=preview_height)
+        self.virtual.pack_propagate(False)
         self.virtual.pack(fill="both", expand=True)
         self.tools_menu = tk.Menu(self.root,tearoff=False)
         self.tools_menu.add_command(label="搜索消息",command=self._show_search)
@@ -62,9 +66,17 @@ class ProductApp(App):
         self.tools_menu.add_command(label="生成定时导出任务…",command=self._schedule_export)
         for label,action in [("归档导入资料库…","import_library"),("打开本机资料库…","open_library"),("清空本机资料库…","clear_library")]:
             self.tools_menu.add_command(label=label,command=lambda action=action:self._library_action(action))
-        menu = tk.Menu(self.root)
-        menu.add_cascade(label="工具",menu=self.tools_menu)
-        self.root.configure(menu=menu)
+        # 0.1.0 主窗口不增加菜单栏/按钮；P2 能力保留在右键与快捷键。
+        self.virtual.tools_menu = self.tools_menu
+        for widget in (self.export_btn,self.title_label,self.canvas,self.virtual.canvas):
+            widget.bind("<Button-3>",lambda event:self.tools_menu.tk_popup(event.x_root,event.y_root))
+        self.root.bind("<Control-f>",lambda _:self._show_search())
+        self.root.bind("<Control-Shift-E>",lambda _:self._show_batch())
+        self.virtual.canvas.configure(bd=0,relief="flat",highlightthickness=1,highlightbackground="#b0b0b0")
+
+    def _loaded(self,source,infos,metas,avs):
+        self.virtual.source = source
+        super()._loaded(source,infos,metas,avs)
 
     def _archive_export(self):
         if self.session is not None:
@@ -178,7 +190,7 @@ class ProductApp(App):
         else:
             self.batch_selected.add(chat)
         self._paint_rows()
-        self.status.configure(text=f"已选择 {len(self.batch_selected)} 个会话，可从工具菜单批量导出")
+        self.status.configure(text=f"已选择 {len(self.batch_selected)} 个会话，可右击导出按钮选择批量导出")
         return "break"
 
     def _paint_rows(self):
@@ -349,7 +361,7 @@ class ProductApp(App):
                 self._pending_jump = None
             self._busy = False
             self.export_btn.state(["!disabled"] if count else ["disabled"])
-            self.status.configure(text=f"共 {count} 条 · 按需加载")
+            self.status.configure(text="")
         self._submit(session,lambda repo: repo.count(info.chat_id),ready,gen=gen)
 
     def _request_page(self, offset, size):
@@ -365,11 +377,11 @@ class ProductApp(App):
         if not key:
             return
         if key in self._thumbs:
-            self.virtual.after_idle(lambda: self.virtual.image_ready(index,self._thumbs.get(key)) if gen == self._render_gen else None)
+            self.virtual.after_idle(lambda: self.virtual.image_ready(index,self._thumbs.get(key),key) if gen == self._render_gen else None)
             return
-        if (gen,index) in self._image_pending:
+        if (gen,index,key) in self._image_pending:
             return
-        self._image_pending.add((gen,index))
+        self._image_pending.add((gen,index,key))
         try:
             release = self.session.pin() if self.session is not None else lambda:None
         except RuntimeError:
@@ -381,7 +393,7 @@ class ProductApp(App):
             except (OSError,ValueError):
                 return None
         def ready(image):
-            self._image_pending.discard((gen,index))
+            self._image_pending.discard((gen,index,key))
             if gen != self._render_gen:
                 return
             if image is not None:
@@ -390,7 +402,7 @@ class ProductApp(App):
                 while len(self._thumbs)>64:
                     self._thumbs.popitem(last=False)
                 if gen == self._render_gen:
-                    self.virtual.image_ready(index,image)
+                    self.virtual.image_ready(index,image,key)
         future = self.tasks.submit(decode,ready,self._error)
         future.add_done_callback(lambda _:release())
 
@@ -404,6 +416,7 @@ class ProductApp(App):
         self.export_right.pack(side="right")
         self.virtual.selection(True,self.selected_msgs)
         self._update_all_label()
+        self.status.configure(text="勾选消息，或使用全选/日期选择")
 
     def _exit_export_mode(self):
         self.export_mode = False
@@ -455,14 +468,28 @@ class ProductApp(App):
 
     def _export_selected(self, session, info, ids, start, end, formats, output):
         from qqexport.export.jobs import ExportJob
-        from qqexport.queue_ui import JobDialog
         self.remember_export(formats,output)
         if session.retired:
             messagebox.showinfo("数据源已更新","请重新选择消息后导出。")
             return
         job = ExportJob(session.source.account_uin,[info.chat_id],
             orchestrator.ExportOptions(formats=formats,out_base=output,start_ts=start,end_ts=end,message_ids=ids))
-        JobDialog(self,session,job)
+        self._jobs.append(job)
+        self.status.configure(text="正在导出…",foreground="#333")
+        def finished(_):
+            if job in self._jobs:
+                self._jobs.remove(job)
+            task = job.tasks[0]
+            if task.status=="done":
+                self._export_done(job.last_report,output)
+            elif task.status=="cancelled":
+                self.status.configure(text="已取消导出")
+            elif task.status=="skipped":
+                self.status.configure(text="所选范围没有消息")
+            else:
+                messagebox.showerror("导出失败",task.error or "请检查输出目录和磁盘空间",parent=self.root)
+                self.status.configure(text="导出失败",foreground="#b00")
+        self._submit(session,lambda repo:job.run(repo),finished)
 
     def _watch_live(self):
         self._watch_id = None

@@ -24,6 +24,7 @@ REQUIRED = (
     "qqexport/product_gui.py",
     "qqexport/repository.py",
     "qqexport/virtual_list.py",
+    "qqexport/classic_row.py",
     "qqexport/tasks.py",
     "qqexport/search.py",
     "qqexport/search_ui.py",
